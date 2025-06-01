@@ -10,9 +10,11 @@ License: What license is it under?
 Encoding: UTF-8
 LazyData: true
 Imports: 
+    bkmr,
     corrplot,
     data.table,
     dplyr,
+    fields,
     gfoRmula,
     ggplot2,
     haven,
@@ -21,6 +23,7 @@ Imports:
     MASS,
     mice,
     mvtnorm,
+    parallel,
     pastecs,
     readstata13,
     SimDesign
