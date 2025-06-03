@@ -27,3 +27,5 @@ Imports:
     pastecs,
     readstata13,
     SimDesign
+URL: https://github.com/Lyric98/causalGBKMR
+BugReports: https://github.com/Lyric98/causalGBKMR/issues
