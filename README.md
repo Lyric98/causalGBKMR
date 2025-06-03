@@ -31,7 +31,7 @@ optimize_gbkmr <- function(sim_popn, T, Adim, Ldim) {
       n = min(500, nrow(sim_popn)),
       iter = 12000,
       sel = seq(8000, 12# g-Bayesian Kernel Machine Regression (g-BKMR) Package
-
+```
 In this document, we illustrate the main features of the `causalGBKMR` R package through examples. This approach enables causal inference for health effects of time-varying correlated environmental mixtures while accounting for time-varying confounding.
 
 ## Cite the method
