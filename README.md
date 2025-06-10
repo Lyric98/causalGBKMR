@@ -1,4 +1,16 @@
-### Performance Optimization
+### Advanced Usage (Statistician Mode)
+
+For users who need more control over the modeling process:
+
+```r
+# Advanced analysis with custom parameters
+results_advanced <- gbkmr_run(
+  data = prepared_data,
+  outcome = "Y",
+  outcome_type = "continuous",
+  time_points = 4,
+  
+  #### Performance Optimization
 
 ```r
 # For large datasets and complex models
@@ -31,7 +43,7 @@ optimize_gbkmr <- function(sim_popn, T, Adim, Ldim) {
       n = min(500, nrow(sim_popn)),
       iter = 12000,
       sel = seq(8000, 12# g-Bayesian Kernel Machine Regression (g-BKMR) Package
-
+```
 In this document, we illustrate the main features of the `causalGBKMR` R package through examples. This approach enables causal inference for health effects of time-varying correlated environmental mixtures while accounting for time-varying confounding.
 
 ## Cite the method
@@ -66,99 +78,167 @@ devtools::install_github("your-username/causalGBKMR")
 library(causalGBKMR)
 ```
 
-## Data Generation
+## Data Preparation from User Matrices
 
-To illustrate the main features of the R package `causalGBKMR`, let's first generate some data. We have built in a few functions directly into the R package for this purpose.
+Most users have data in matrix format. The package provides `prepare_gbkmr_data()` to convert user matrices into the required g-BKMR format.
+
+### Required Input
+
+**Three Matrices:**
+1. **`Y`**: Outcome vector (length n)
+2. **`Z`**: Mixture exposure matrix (n × (Adim × T)) 
+3. **`X`**: Covariate matrix (n × (Ldim × T + baseline_covs))
+
+**Three Parameters:**
+1. **`time_points`**: Number of time points (T)
+2. **`mixture_components`**: Number of mixture components per time point (Adim)
+3. **`td_covariates`**: Number of time-dependent covariates per time point (Ldim)
+
+### Critical Matrix Organization
+
+**Z Matrix (Mixtures)**: Chronological order by time point
+```r
+# Example: 3 metals × 4 time points = 12 columns
+# [As_T0, Mn_T0, Pb_T0, As_T1, Mn_T1, Pb_T1, As_T2, Mn_T2, Pb_T2, As_T3, Mn_T3, Pb_T3]
+```
+
+**X Matrix (Covariates)**: Time-dependent covariates + baseline covariates  
+```r
+# Example: 2 TD covariates × 4 time points + 2 baseline = 10 columns
+# [BMI_T1, BP_T1, BMI_T2, BP_T2, BMI_T3, BP_T3, BMI_T4, BP_T4, Sex, Age]
+# Note: TD covariates start from T1 (not T0), baseline covariates at end
+```
+
+### Smart Variable Naming
+
+The package now uses **intelligent naming** for time-dependent covariates:
+
+**When you provide covariate names:**
+```r
+prepared_data <- prepare_gbkmr_data(
+  Y = Y, Z = Z, X = X,
+  time_points = 4, mixture_components = 3, td_covariates = 2,
+  td_covariate_names = c("bmi", "blood_pressure")  # Your actual names
+)
+
+# Creates variables: bmi_0, blood_pressure_0, bmi_1, blood_pressure_1, bmi_2, blood_pressure_2, etc.
+```
+
+**When you don't provide names (generic):**
+```r
+prepared_data <- prepare_gbkmr_data(
+  Y = Y, Z = Z, X = X,
+  time_points = 4, mixture_components = 3, td_covariates = 2
+  # No td_covariate_names provided
+)
+
+# Creates variables: td_covariate1_0, td_covariate2_0, td_covariate1_1, td_covariate2_1, etc.
+```
+
+### Usage Example
 
 ```r
 library(causalGBKMR)
 
-# Generate population data
-set.seed(123)
-sim_popn <- generate_panel_data(
-  popN = 1e6,                # Population size  
-  T = 3,                     # Number of time points
-  Adim = 3,                  # Number of exposures per time point
-  Ldim = 3,                  # Number of time-varying confounders per time point
-  outcome_type = "binary",   # "continuous" or "binary"
-  relationship_type = "quadratic",  # "linear", "quadratic", or "quadratic+interaction"
-  confounding = "high"       # "low" or "high"
+# Example 1: With custom covariate names (recommended)
+prepared_data <- prepare_gbkmr_data(
+  Y = your_outcome_vector,              # Your outcome data
+  Z = your_mixture_matrix,              # Your mixture exposure data  
+  X = your_covariate_matrix,            # Your covariate data
+  time_points = 4,                      # 4 time points
+  mixture_components = 3,               # 3 metals per time point  
+  td_covariates = 2,                    # 2 time-dependent covariates per time point
+  baseline_covariates = 2,              # 2 baseline covariates
+  td_covariate_names = c("bmi", "bp"),  # Meaningful names for your covariates
+  log_transform_mixtures = TRUE         # Log-transform exposures (recommended)
 )
 
-# Examine the generated data structure
-head(sim_popn)
-colnames(sim_popn)
+# Example 2: Without custom names (uses generic names)
+prepared_data_generic <- prepare_gbkmr_data(
+  Y = your_outcome_vector,
+  Z = your_mixture_matrix,
+  X = your_covariate_matrix,
+  time_points = 4,
+  mixture_components = 3,
+  td_covariates = 2,
+  baseline_covariates = 2
+  # No td_covariate_names - will use td_covariate1, td_covariate2
+)
+
+# Validate the converted data
+check_gbkmr_data(prepared_data)
+
+# Run g-BKMR analysis
+results <- gbkmr_run(
+  data = prepared_data,
+  outcome = "Y",
+  outcome_type = "continuous",
+  time_points = 4
+)
 ```
 
-**Key parameters for data generation:**
-- `popN`: Population size for simulation
-- `T`: Number of time points (including baseline)
-- `Adim`: Number of exposure variables at each time point
-- `Ldim`: Number of time-varying confounders at each time point  
-- `outcome_type`: Type of outcome variable
-- `relationship_type`: Functional form of exposure-outcome relationship
-- `confounding`: Strength of confounding relationships
+### Key Constraints
 
-The generated dataset will have columns following this pattern:
-- Baseline variables: `sex`, `waist0_1`, ..., `waist0_Ldim` 
-- Exposures: `logM1_0`, ..., `logMAdim_0`, `logM1_1`, ..., `logMAdim_T-1`
-- Time-varying confounders: `waist1_1`, ..., `waist1_Ldim`, ..., `waistT-1_Ldim`
-- Outcome: `Y`
-- Subject ID: `id`
-
-## Data Format Requirements
-
-causalGBKMR works with the **wide-format data** generated by `generate_panel_data()` or similar user data.
-
-### Required Data Structure
-
-The package expects data in wide format where:
-
-1. **Time Variable**: Implicitly represented through variable naming (e.g., `_0`, `_1`, `_2` suffixes)
-2. **Multiple Exposures**: Multiple exposure variables per time point (e.g., `logM1_0`, `logM2_0`, `logM3_0` for 3 exposures at time 0)
-3. **Time-Dependent Confounders**: Multiple confounders per time point (e.g., `waist1_1`, `waist2_1`, `waist3_1` for 3 confounders at time 1)
-4. **Baseline Covariates**: Time-invariant variables (e.g., `sex`, `waist0_1`, `waist0_2`)
-5. **Outcome**: Single outcome variable `Y` measured at the final time point
+- **Time-dependent covariates MUST be measured at ALL time points**
+- **Matrix dimensions must match exactly** (function validates this)
+- **Baseline covariates go at the END of X matrix**
+- **Missing time points not supported** in basic version
+```
 
 ## Tutorial
 
+### Option 1: Using Your Own Data (Recommended)
+
+For users with real data in matrix format:
+
 ### Basic Usage (Novice Mode)
 
-For users who want a simple analysis with the generated data:
+For users who want a simple analysis, the package now **automatically detects** variable patterns in your data:
 
 ```r
 library(causalGBKMR)
 
-# Run g-BKMR analysis on generated data
-results_basic <- run_gbkmr_panel(
-  sim_popn = sim_popn,         # Generated population data
-  T = 3,                       # Number of time points
-  currind = 1,                 # Random seed index
-  sel = seq(12000, 14000, by = 25),  # MCMC samples for inference
-  n = 500,                     # Sample size for analysis
-  K = 1000,                    # Number of prediction samples
-  iter = 15000,                # Total MCMC iterations
-  parallel = TRUE,             # Use parallel processing
-  save_exposure_preds = TRUE,
-  return_ci = TRUE,
-  make_plots = TRUE,
-  use_knots = TRUE,            # Use knot-based approximation
-  n_knots = 50                 # Number of knots
+# Step 1: Prepare your data (if from matrices)
+prepared_data <- prepare_gbkmr_data(
+  Y = your_outcome_vector,
+  Z = your_mixture_matrix,
+  X = your_covariate_matrix,
+  time_points = 4,
+  mixture_components = 3,
+  td_covariates = 2,
+  baseline_covariates = 2
 )
 
-# View results
-print(results_basic)
+# Step 2: Run g-BKMR analysis (simplified interface)
+results <- gbkmr_run(
+  data = prepared_data,           # Your prepared dataset
+  outcome = "Y",                  # Outcome variable name
+  outcome_type = "continuous",    # "continuous" or "binary"
+  time_points = 4                 # Number of time points
+)
+
+# The function automatically detects:
+# - Number of exposures per time point
+# - Number of time-dependent covariates per time point  
+# - Time-dependent covariate naming patterns
+# - All variable relationships across time points
+
+print(results)
 ```
 
-**Key Parameters for Basic Usage:**
-- `sim_popn`: Wide-format dataset (generated or user-provided)
-- `T`: Number of time points
-- `sel`: MCMC iterations to use for inference (after burn-in)
-- `n`: Sample size for analysis (subsampled from population)
-- `K`: Number of prediction samples for g-formula
-- `iter`: Total MCMC iterations
-- `use_knots`: Whether to use knot-based GP approximation for efficiency
-- `n_knots`: Number of knots for approximation
+**What you need to provide (minimal input):**
+1. `data`: Your dataset (prepared with `prepare_gbkmr_data()` or in sim_popn format)
+2. `outcome`: Name of your outcome variable
+3. `outcome_type`: Whether outcome is "continuous" or "binary"
+4. `time_points`: Number of time points in your study
+
+**What the package does automatically:**
+- **Auto-detects exposure variables** (logM1_0, logM2_0, etc.) across all time points
+- **Auto-detects time-dependent covariates** with flexible naming patterns
+- **Auto-detects baseline covariates** and their patterns
+- **Fits sequential BKMR models** for each time-dependent confounder
+- **Handles g-formula computation** automatically
+- **Returns causal effect estimates** with credible intervals
 
 ### Advanced Usage (Statistician Mode)
 
@@ -202,40 +282,45 @@ results_advanced <- run_gbkmr_panel(
 - `iter`: Total MCMC iterations (adjust based on convergence needs)
 - `n_knots`: Number of knots (increase for complex exposure-response relationships)
 
-### Using Pre-fitted Models
+### Flexible Variable Detection
 
-For maximum flexibility, you can provide pre-fitted BKMR models:
+The updated package now **automatically detects** various time-dependent covariate naming patterns:
 
 ```r
-# Fit individual models first (using bkmr package)
-library(bkmr)
+# Supported naming patterns for time-dependent covariates:
 
-# Prepare data in wide format for custom fitting
-wide_data <- prepare_wide_format(example_data, 
-                                time_points = 4, 
-                                id = "id", 
-                                time = "time")
+# Pattern 1: User-provided meaningful names
+# bmi_0, bp_0 (baseline)
+# bmi_1, bp_1 (time 1) 
+# bmi_2, bp_2 (time 2)
 
-# Fit custom outcome model
-custom_outcome_model <- kmbayes(
-  y = wide_data$y_continuous,
-  Z = wide_data[, exposure_cols],
-  X = wide_data[, covariate_cols],
-  iter = 15000,
-  varsel = TRUE
+# Pattern 2: Alternative user format
+# bmi0, bp0 (baseline)
+# bmi1, bp1 (time 1)
+# bmi2, bp2 (time 2)
+
+# Pattern 3: Generated data format (legacy)
+# waist0_1, waist0_2 (baseline)
+# waist1_1, waist1_2 (time 1)  
+# waist2_1, waist2_2 (time 2)
+
+# Pattern 4: Generic format (when names not provided)
+# td_covariate1_0, td_covariate2_0 (baseline)
+# td_covariate1_1, td_covariate2_1 (time 1)
+# td_covariate1_2, td_covariate2_2 (time 2)
+
+# The detection function automatically identifies the pattern used
+results <- gbkmr_run(
+  data = your_data_with_any_naming,
+  outcome = "Y", 
+  outcome_type = "continuous",
+  time_points = 4
 )
 
-# Use pre-fitted model in g-BKMR
-results_custom <- gbkmr_run(
-  data = example_data,
-  outcome_model = custom_outcome_model,    # Pre-fitted model
-  exposure = "arsenic",
-  t_covariates = c("bp", "bmi"),
-  base_covariates = c("age", "sex"),
-  time_points = 4,
-  id = "id",
-  time = "time"
-)
+# Check what was detected
+cat("Auto-detected TD covariate names:\n")
+print(results$detection_info$td_covariate_names)
+cat("Detection pattern:", results$detection_info$detected_pattern, "\n")
 ```
 
 ## Results Interpretation
@@ -244,17 +329,12 @@ results_custom <- gbkmr_run(
 
 ```r
 # Extract main causal effect estimate
-causal_effect <- results_basic$diff_gBKMR
-cat("Causal Effect (75th vs 25th percentile):", causal_effect, "\n")
+causal_effect <- results_basic$causal_effect
+cat("Causal Effect (75th vs 25th percentile):", causal_effect$estimate, "\n")
+cat("95% Credible Interval:", causal_effect$lower, "to", causal_effect$upper, "\n")
 
-# Access counterfactual outcomes
-Ya_samples <- results_basic$Ya          # 25th percentile scenario
-Yastar_samples <- results_basic$Yastar  # 75th percentile scenario
-
-# Calculate credible intervals
-ci_lower <- quantile(Yastar_samples - Ya_samples, 0.025)
-ci_upper <- quantile(Yastar_samples - Ya_samples, 0.975)
-cat("95% Credible Interval:", ci_lower, "to", ci_upper, "\n")
+# Access detailed results
+summary(results_basic)
 ```
 
 ### Visualization
@@ -262,44 +342,55 @@ cat("95% Credible Interval:", ci_lower, "to", ci_upper, "\n")
 ```r
 library(ggplot2)
 
-# Plot counterfactual distributions
-df_outcomes <- data.frame(
-  Scenario = rep(c("25th percentile", "75th percentile"), 
-                 c(length(results_basic$Ya), length(results_basic$Yastar))),
-  Outcome = c(results_basic$Ya, results_basic$Yastar)
-)
+# Plot main results
+plot(results_basic)
 
-ggplot(df_outcomes, aes(x = Outcome, fill = Scenario)) +
-  geom_density(alpha = 0.7) +
-  theme_minimal() +
-  labs(title = "Counterfactual Outcome Distributions",
-       x = "Predicted Outcome", y = "Density")
-
-# Plot difference in means
+# Or create custom plots
+# Plot counterfactual means comparison
 df_plot <- data.frame(
   Scenario = c("25th percentile", "75th percentile"), 
-  Mean = c(mean(results_basic$Ya), mean(results_basic$Yastar))
+  Mean = c(results_basic$counterfactual_means$low, 
+           results_basic$counterfactual_means$high)
 )
 
 ggplot(df_plot, aes(x = Scenario, y = Mean, fill = Scenario)) +
   geom_col() +
   theme_minimal() +
-  labs(title = "Counterfactual Means", y = "Mean Outcome")
+  labs(title = "Counterfactual Outcome Comparison", 
+       y = "Mean Outcome")
+
+# Plot variable importance if available
+if (!is.null(results_basic$variable_importance)) {
+  barplot(results_basic$variable_importance, 
+          main = "Variable Importance", 
+          las = 2, cex.names = 0.8)
+}
 ```
 
 ### Accessing Detailed Results
 
 ```r
-# Access variable importance (beta coefficients)
-beta_coefficients <- results_basic$beta_all
-cat("Number of coefficients:", length(beta_coefficients), "\n")
-
-# Access mediator predictions
-L_values_25th <- results_basic$L_values_a      # Mediator values at 25th percentile
-L_values_75th <- results_basic$L_values_astar  # Mediator values at 75th percentile
-
-# Summary of results structure
+# Examine results structure
 str(results_basic, max.level = 1)
+
+# Access fitted models (if saved)
+if (!is.null(results_basic$fitted_models)) {
+  outcome_model <- results_basic$fitted_models$outcome
+  confounder_models <- results_basic$fitted_models$confounders
+}
+
+# Access variable selection results (if enabled)
+if (!is.null(results_basic$variable_selection)) {
+  inclusion_probs <- results_basic$variable_selection$inclusion_probabilities
+  print("Variable inclusion probabilities:")
+  print(inclusion_probs)
+}
+
+# Access convergence diagnostics (if enabled)
+if (!is.null(results_basic$diagnostics)) {
+  print("MCMC Convergence Summary:")
+  print(results_basic$diagnostics$convergence_summary)
+}
 ```
 
 ## Model Comparison and Sensitivity Analysis
