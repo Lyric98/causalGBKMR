@@ -43,7 +43,7 @@ optimize_gbkmr <- function(sim_popn, T, Adim, Ldim) {
       n = min(500, nrow(sim_popn)),
       iter = 12000,
       sel = seq(8000, 12# g-Bayesian Kernel Machine Regression (g-BKMR) Package
-```
+
 In this document, we illustrate the main features of the `causalGBKMR` R package through examples. This approach enables causal inference for health effects of time-varying correlated environmental mixtures while accounting for time-varying confounding.
 
 ## Cite the method
@@ -80,7 +80,7 @@ library(causalGBKMR)
 
 ## Data Preparation from User Matrices
 
-Most users have data in matrix format. The package provides `prepare_gbkmr_data()` to convert user matrices into the required g-BKMR format.
+Most users have data in matrix format. The package provides `prepare_gbkmr_data()` to convert user matrices into the required g-BKMR format with **enhanced validation** and **binary covariate support**.
 
 ### Required Input
 
@@ -93,6 +93,44 @@ Most users have data in matrix format. The package provides `prepare_gbkmr_data(
 1. **`time_points`**: Number of time points (T)
 2. **`mixture_components`**: Number of mixture components per time point (Adim)
 3. **`td_covariates`**: Number of time-dependent covariates per time point (Ldim)
+
+### ✨ **New Features**
+
+#### **1. Enhanced Input Validation**
+The package now provides **detailed error analysis** when matrix dimensions don't match:
+
+```r
+# If your matrices have wrong dimensions, you'll get helpful suggestions:
+prepare_gbkmr_data(Y, Z, X, time_points = 4, mixture_components = 3, td_covariates = 2)
+
+# Example error message:
+# ❌ Validation Issues Found:
+#   1. Z matrix dimension mismatch! Expected 12 columns but got 15 (difference: 3)
+#      Suggestions:
+#        - Possible fix: Set time_points = 5 (current data suggests 5 time points)
+#        - Possible fix: Set mixture_components = 3.75 (check your data structure)
+```
+
+#### **2. Binary Time-Dependent Covariate Support**
+Now supports **mixed covariate types** (binary + continuous):
+
+```r
+# Specify covariate types for each time-dependent covariate
+prepared_data <- prepare_gbkmr_data(
+  Y = Y, Z = Z, X = X,
+  time_points = 4,
+  mixture_components = 3,
+  td_covariates = 3,
+  td_covariate_names = c("medication", "bmi", "blood_pressure"),
+  td_covariate_types = c("binary", "continuous", "continuous"),  # NEW!
+  log_transform_mixtures = TRUE
+)
+
+# The package will:
+# - Validate binary data (only 0/1 values)
+# - Use appropriate BKMR models (probit for binary, Gaussian for continuous)
+# - Handle mixed predictions in counterfactual analysis
+```
 
 ### Critical Matrix Organization
 
@@ -135,46 +173,82 @@ prepared_data <- prepare_gbkmr_data(
 # Creates variables: td_covariate1_0, td_covariate2_0, td_covariate1_1, td_covariate2_1, etc.
 ```
 
-### Usage Example
+### Usage Examples
+
+#### **Example 1: Enhanced Validation (Debugging Matrix Issues)**
 
 ```r
 library(causalGBKMR)
 
-# Example 1: With custom covariate names (recommended)
+# Your matrices with potential dimension issues
+Y <- your_outcome_vector
+Z <- your_mixture_matrix  # Might have wrong dimensions
+X <- your_covariate_matrix
+
+# Enhanced validation will provide detailed feedback
 prepared_data <- prepare_gbkmr_data(
-  Y = your_outcome_vector,              # Your outcome data
-  Z = your_mixture_matrix,              # Your mixture exposure data  
-  X = your_covariate_matrix,            # Your covariate data
-  time_points = 4,                      # 4 time points
-  mixture_components = 3,               # 3 metals per time point  
-  td_covariates = 2,                    # 2 time-dependent covariates per time point
-  baseline_covariates = 2,              # 2 baseline covariates
-  td_covariate_names = c("bmi", "bp"),  # Meaningful names for your covariates
-  log_transform_mixtures = TRUE         # Log-transform exposures (recommended)
-)
-
-# Example 2: Without custom names (uses generic names)
-prepared_data_generic <- prepare_gbkmr_data(
-  Y = your_outcome_vector,
-  Z = your_mixture_matrix,
-  X = your_covariate_matrix,
+  Y = Y, Z = Z, X = X,
   time_points = 4,
-  mixture_components = 3,
+  mixture_components = 3, 
   td_covariates = 2,
-  baseline_covariates = 2
-  # No td_covariate_names - will use td_covariate1, td_covariate2
+  baseline_covariates = 2,
+  verbose = TRUE  # Get detailed validation output
 )
 
-# Validate the converted data
-check_gbkmr_data(prepared_data)
+# Example output:
+# === Enhanced Input Validation ===
+# Checking matrix dimensions:
+#   Sample size (n): 300
+#   Time points (T): 4
+#   Mixture components per time point (Adim): 3
+#   TD covariates per time point (Ldim): 2
+#   Baseline covariates: 2
+# 
+# Expected vs Actual dimensions:
+#   Z matrix: Expected 12 columns (3×4), Actual 12 ✓
+#   X matrix: Expected 10 columns (2×4+2), Actual 10 ✓
+# ✅ All validation checks passed!
+```
 
-# Run g-BKMR analysis
-results <- gbkmr_run(
-  data = prepared_data,
-  outcome = "Y",
-  outcome_type = "continuous",
-  time_points = 4
+#### **Example 2: Binary + Continuous Covariates**
+
+```r
+# Generate test data with mixed covariate types
+test_data <- create_test_data_with_binary()  # Built-in test function
+
+# Prepare data with explicit covariate type specification
+prepared_data <- prepare_gbkmr_data(
+  Y = test_data$Y,
+  Z = test_data$Z,
+  X = test_data$X,
+  time_points = test_data$T,
+  mixture_components = test_data$Adim,
+  td_covariates = test_data$Ldim,
+  td_covariate_names = c("medication", "bmi", "blood_pressure"),
+  td_covariate_types = c("binary", "continuous", "continuous"),  # Mixed types
+  baseline_covariates = test_data$n_baseline
 )
+
+# Output will show:
+# ✓ Covariate types: 2 continuous, 1 binary
+#   Binary covariates: medication
+```
+
+#### **Example 3: Auto-Detection of Covariate Types**
+
+```r
+# If you don't specify types, the package auto-detects them
+prepared_data <- prepare_gbkmr_data(
+  Y = test_data$Y, Z = test_data$Z, X = test_data$X,
+  time_points = 4, mixture_components = 3, td_covariates = 3,
+  td_covariate_names = c("medication", "bmi", "bp")
+  # No td_covariate_types specified - will auto-detect
+)
+
+# Auto-detection output:
+# Auto-detected covariate 1 as binary (values: 0, 1)
+# Auto-detected covariate 2 as continuous (range: 18.5 to 35.2)
+# Auto-detected covariate 3 as continuous (range: 95.3 to 155.7)
 ```
 
 ### Key Constraints
