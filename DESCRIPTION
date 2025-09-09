@@ -1,31 +1,24 @@
 Package: causalGBKMR
-Type: Package
-Title: What the Package Does (Title Case)
+Title: Causal Inference for Time-Varying Environmental Mixtures using g-BKMR
 Version: 0.1.0
-Author: Who wrote it
-Maintainer: The package maintainer <yourself@somewhere.net>
-Description: More about what it does (maybe more than one line)
-    Use four spaces when indenting paragraphs within the Description.
-License: What license is it under?
+Authors@R: person("Your", "Name", email = "your.email@example.com", role = c("aut", "cre"))
+Description: Implements g-BKMR (g-computation with Bayesian Kernel Machine Regression) 
+    for causal inference with time-varying environmental mixtures and confounders.
+License: MIT + file LICENSE
 Encoding: UTF-8
 LazyData: true
-Imports: 
+Roxygen: list(markdown = TRUE)
+RoxygenNote: 7.3.2
+Depends: 
+    R (>= 3.5.0)
+Imports:
     bkmr,
-    corrplot,
-    data.table,
-    dplyr,
     fields,
-    gfoRmula,
+    dplyr,
     ggplot2,
-    haven,
+    parallel
+Suggests:
+    testthat (>= 3.0.0),
     knitr,
-    lubridate,
-    MASS,
-    mice,
-    mvtnorm,
-    parallel,
-    pastecs,
-    readstata13,
-    SimDesign
-URL: https://github.com/Lyric98/causalGBKMR
-BugReports: https://github.com/Lyric98/causalGBKMR/issues
+    rmarkdown
+VignetteBuilder: knitr
