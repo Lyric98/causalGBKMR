@@ -167,10 +167,6 @@ g-BKMR combines:
 2. **BKMR**: Flexible modeling of exposure mixtures using kernel machine regression
 3. **Time-varying confounding adjustment**: Proper handling of confounders that change over time
 
-### Key References
-
-- Chai, Z., et al. (2023). "g-BKMR: Causal Inference for health effects of time-varying correlated environmental mixtures"
-- Bobb, J.F., et al. (2015). "Bayesian kernel machine regression for estimating the health effects of multi-pollutant mixtures" *Biostatistics*
 
 ## Troubleshooting
 
@@ -187,37 +183,8 @@ g-BKMR combines:
    - Ensure your prepared data follows the expected naming conventions
    - Check column names match the expected patterns
 
-### Getting Help
-
-1. Check function documentation: `?gbkmr_run`
-2. Run examples in the documentation
-3. Open an issue on GitHub with a reproducible example
-
-## Contributing
-
-Contributions are welcome! Please:
-
-1. Fork the repository
-2. Create a feature branch
-3. Add tests for new functionality
-4. Submit a pull request
-
-## License
-
-This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.
-
-## Citation
-
-If you use this package in your research, please cite:
-
-```
-Chai, Z., Navas-Acien, A., Coull, B., & Valeri, L. (2023). 
-g-BKMR: Causal Inference for health effects of time-varying 
-correlated environmental mixtures. [Journal Name].
-```
 
 ## Contact
 
-- **Maintainer**: Your Name
-- **Email**: your.email@example.com
-- **Issues**: [GitHub Issues](https://github.com/yourusername/causalGBKMR/issues)
+- **Maintainer**: Yanran Li
+- **Email**: yl5465@cumc.columbia.edu
