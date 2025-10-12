@@ -1,277 +1,499 @@
 #' @file 04-core-analysis.R
-#' @title Core g-BKMR analysis functions
-#' @description Main computational engines for g-BKMR analysis. Contains the core
-#' algorithm that performs Bayesian kernel machine regression with time-varying confounding.
+#' @title Core g-BKMR analysis implementation
+#' @description Main function to run g-BKMR analysis with time-varying mixtures
+#' and time-dependent confounders. Implements g-formula with BKMR using sequential
+#' mediator sampling and outcome prediction.
 
 #' Run g-BKMR panel analysis
 #'
-#' @description Performs the core g-BKMR analysis on a prepared dataset. This function
-#' implements the g-formula with Bayesian kernel machine regression to estimate
-#' causal effects of time-varying exposure mixtures while accounting for time-varying
-#' confounding.
+#' @description Performs g-BKMR analysis on longitudinal data with time-varying
+#' exposures and confounders. Uses Bayesian Kernel Machine Regression (BKMR) to
+#' model both mediator (confounder) and outcome processes, then implements
+#' g-computation to estimate causal effects.
 #'
-#' @param sim_popn Data frame. Prepared data in g-BKMR format.
-#' @param T Integer. Number of time points (default: 5).
-#' @param currind Integer. Current iteration index for reproducibility (default: 1).
-#' @param sel Numeric vector. MCMC iterations to use for inference (default: seq(22000, 24000, by = 25)).
-#' @param n Integer. Sample size to use for analysis (default: 500).
-#' @param K Integer. Number of samples for Monte Carlo integration (default: 1000).
-#' @param iter Integer. Total MCMC iterations (default: 24000).
-#' @param parallel Logical. Whether to use parallel processing (default: TRUE).
-#' @param save_exposure_preds Logical. Whether to save exposure predictions (default: TRUE).
-#' @param return_ci Logical. Whether to return confidence intervals (default: TRUE).
-#' @param make_plots Logical. Whether to generate diagnostic plots (default: TRUE).
-#' @param use_knots Logical. Whether to use knots for kernel approximation (default: TRUE).
-#' @param n_knots Integer. Number of knots to use (default: 50).
+#' @param sim_popn Data frame. Must contain prepared g-BKMR data with columns:
+#'   \itemize{
+#'     \item \strong{Y}: Outcome variable
+#'     \item \strong{id}: Subject identifier
+#'     \item \strong{Exposure variables}: Named as logM1_0, logM2_0, ..., logMp_T-1
+#'     \item \strong{Time-dependent confounders}: Named according to mediator_basenames
+#'     \item \strong{Baseline covariates}: As specified in common_covariates
+#'   }
+#' @param T Integer. Total number of time points (including t=0). Default: 5.
+#' @param p Integer. Number of exposure variables per time point. Default: 3.
+#' @param mediator_basenames Character vector. Base names for time-dependent
+#'   confounders (e.g., c("waist", "bmi")). Variables should be named as
+#'   basename0, basename1, etc. Default: c("waist").
+#' @param common_covariates Character vector. Names of baseline covariates to
+#'   adjust for in all models. Default: c("sex", "waist0").
+#' @param currind Integer. Random seed for reproducibility. Default: 1.
+#' @param n Integer. Sample size to use for analysis (sampled from sim_popn).
+#'   Default: 500.
+#' @param K Integer. Number of Monte Carlo samples for g-computation. Higher
+#'   values provide more stable estimates. Default: 1000.
+#' @param sel Numeric vector. MCMC iteration indices to use for inference
+#'   (after burn-in). Default: seq(22000, 24000, by = 25).
+#' @param iter Integer. Number of MCMC iterations for mediator models.
+#'   Default: 24000.
+#' @param n_iter Integer or NULL. Number of MCMC iterations for outcome model.
+#'   If NULL, uses same as iter. Default: NULL.
+#' @param n_knots Integer. Number of knots for kernel approximation via
+#'   cover.design(). Reduce if memory issues occur. Default: 50.
+#' @param verbose_every Integer. Print progress every N iterations. Set to
+#'   large number to reduce output. Default: 50.
 #'
 #' @return A list containing:
 #' \describe{
-#'   \item{diff_gBKMR}{Numeric. The main causal effect estimate}
-#'   \item{Ya}{Numeric vector. Potential outcomes under low exposure}
-#'   \item{Yastar}{Numeric vector. Potential outcomes under high exposure}
-#'   \item{beta_all}{Numeric vector. All regression coefficients}
-#'   \item{L_values_a}{List. Mediator values under low exposure}
-#'   \item{L_values_astar}{List. Mediator values under high exposure}
-#'   \item{detection_info}{List. Variable detection information}
-#'   \item{fitted_models}{List. Fitted BKMR models (if save_exposure_preds = TRUE)}
+#'   \item{diff_gBKMR}{Numeric. Estimated average treatment effect (ATE)}
+#'   \item{Ya}{Numeric vector. Posterior means of counterfactual outcome under intervention a (25th percentile)}
+#'   \item{Yastar}{Numeric vector. Posterior means of counterfactual outcome under intervention a* (75th percentile)}
+#'   \item{Ya_mat}{Matrix (length(sel) × K). Full posterior samples for Y under a}
+#'   \item{Yastar_mat}{Matrix (length(sel) × K). Full posterior samples for Y under a*}
+#'   \item{L_samp_a}{List. Sampled mediator values under intervention a}
+#'   \item{L_samp_astar}{List. Sampled mediator values under intervention a*}
+#'   \item{fit_mediators}{List. Fitted BKMR models for each mediator at each time point}
+#'   \item{fit_y}{BKMR model object. Fitted outcome model}
+#'   \item{beta_L}{List. Posterior mean regression coefficients for mediator models}
+#'   \item{beta_y}{Numeric vector. Posterior mean regression coefficients for outcome model}
+#'   \item{meta}{List. Metadata including all analysis parameters and timing information}
 #' }
 #'
 #' @details
-#' The analysis proceeds in several steps:
-#' \enumerate{
-#'   \item Auto-detect variable patterns using \code{\link{detect_variable_patterns}}
-#'   \item Fit mediator models for each time point using BKMR
-#'   \item Fit outcome model using BKMR
-#'   \item Compute counterfactual predictions using the g-formula
-#'   \item Calculate causal effect estimates
+#' The function implements the following workflow:
+#'
+#' \strong{1. Model Fitting Phase}
+#' \itemize{
+#'   \item Fits BKMR models for each time-dependent confounder at each time point
+#'   \item Each mediator model conditions on: past exposures, past mediators, baseline covariates
+#'   \item Fits outcome model conditioning on: all exposures, all mediators, baseline covariates
+#'   \item Uses kernel approximation (cover.design) for computational efficiency
 #' }
 #'
-#' The function compares outcomes when all exposures are set to their 25th percentile
-#' versus when all exposures are set to their 75th percentile.
+#' \strong{2. G-Computation Phase}
+#' \itemize{
+#'   \item Sequentially samples mediators forward through time under two intervention scenarios:
+#'     \itemize{
+#'       \item \strong{a}: All exposures set to 25th percentile
+#'       \item \strong{a*}: All exposures set to 75th percentile
+#'     }
+#'   \item For each MCMC iteration j and Monte Carlo sample k:
+#'     \itemize{
+#'       \item Sample L_t from P(L_t | A_{0:t-1}, L_{1:t-1}, C_0) under interventions
+#'       \item Continue sequentially through all time points
+#'       \item Sample final outcome from P(Y | A_{0:T-1}, L_{1:T-1}, C_0)
+#'     }
+#'   \item Averages over K samples and posterior draws to get E[Y^a] and E[Y^{a*}]
+#' }
+#'
+#' \strong{3. Causal Effect Estimation}
+#' \itemize{
+#'   \item Computes ATE = E[Y^{a*}] - E[Y^a]
+#'   \item Provides full posterior distribution for uncertainty quantification
+#' }
+#'
+#' @section Computational Considerations:
+#' \itemize{
+#'   \item Total computation time scales with: T, p, |mediator_basenames|, length(sel), K, iter
+#'   \item Memory usage scales with: n, n_knots, length(sel) × K
+#'   \item For large datasets: reduce n, n_knots, or length(sel)
+#'   \item For faster prototyping: reduce iter, length(sel), or K
+#' }
+#'
+#' @section Data Requirements:
+#' The input data frame \code{sim_popn} must follow g-BKMR naming conventions:
+#' \itemize{
+#'   \item Exposures: logM1_0, logM2_0, ..., logMp_0, logM1_1, ..., logMp_{T-1}
+#'   \item Mediators: waist0, waist1, ..., waist_{T-1} (if mediator_basenames = "waist")
+#'   \item For multiple mediators: waist0, bmi0, waist1, bmi1, etc.
+#'   \item Baseline covariates: sex, age, or as specified in common_covariates
+#'   \item Outcome: Y (continuous or binary)
+#'   \item ID: id (subject identifier)
+#' }
 #'
 #' @examples
 #' \dontrun{
-#' # Assume you have prepared data
-#' library(bkmr)
+#' # Prepare your data first using prepare_gbkmr_data()
+#' # Assume data is already in correct format
 #'
-#' # Run analysis with default settings
-#' results <- run_gbkmr_panel(prepared_data, T = 3)
-#'
-#' # Extract main results
-#' causal_effect <- results$diff_gBKMR
-#' detection_info <- results$detection_info
-#'
-#' # Run with custom settings
+#' # Basic usage with defaults
 #' results <- run_gbkmr_panel(
-#'   sim_popn = prepared_data,
+#'   sim_popn = my_prepared_data,
 #'   T = 3,
-#'   n = 300,
-#'   iter = 15000,
-#'   make_plots = FALSE
+#'   p = 2,
+#'   mediator_basenames = c("waist")
+#' )
+#'
+#' # Access results
+#' cat("Estimated ATE:", results$diff_gBKMR, "\n")
+#' cat("95% CI:", quantile(results$Yastar_mat - results$Ya_mat, c(0.025, 0.975)), "\n")
+#'
+#' # Advanced usage with custom parameters
+#' results_advanced <- run_gbkmr_panel(
+#'   sim_popn = my_prepared_data,
+#'   T = 4,
+#'   p = 3,
+#'   mediator_basenames = c("waist", "bmi"),
+#'   common_covariates = c("sex", "age", "waist0", "bmi0"),
+#'   n = 600,
+#'   K = 2000,
+#'   sel = seq(30000, 40000, by = 50),
+#'   iter = 40000,
+#'   n_knots = 60,
+#'   verbose_every = 100
 #' )
 #' }
 #'
-#' @importFrom bkmr kmbayes SamplePred
-#' @importFrom fields cover.design
-#' @importFrom dplyr %>%
-#' @importFrom ggplot2 ggplot geom_col theme_minimal ggtitle aes
-#' @importFrom parallel mclapply
+#' @references
+#' Bobb, J.F., Valeri, L., Claus Henn, B., et al. (2015). Bayesian kernel machine
+#' regression for estimating the health effects of multi-pollutant mixtures.
+#' \emph{Biostatistics}, 16(3), 493-508.
 #'
-#' @keywords internal
+#' Robins, J. (1986). A new approach to causal inference in mortality studies with
+#' sustained exposure periods. \emph{Mathematical Modelling}, 7(9-12), 1393-1512.
+#'
+#' @seealso
+#' \code{\link{prepare_gbkmr_data}} for data preparation
+#' \code{\link{detect_variable_patterns}} for automatic variable detection
+#' \code{\link[bkmr]{kmbayes}} for BKMR model fitting
+#'
+#' @export
+
+
+
+
 run_gbkmr_panel <- function(
     sim_popn,
-    T = 5,
+    T = 5,                               #
+    p = 3,                               #
+    mediator_basenames = c("waist"),     #
+    common_covariates = c("sex", "waist0"),
     currind = 1,
-    sel = seq(22000, 24000, by = 25),
     n = 500,
     K = 1000,
-    iter = 24000,
-    parallel = TRUE,
-    save_exposure_preds = TRUE,
-    return_ci = TRUE,
-    make_plots = TRUE,
-    use_knots = TRUE,
-    n_knots = 50
-) {
-  # Libraries are now imported via NAMESPACE (see @importFrom above)
+    sel = seq(22000, 24000, by = 25),
+    iter = 24000,                        # 中介模型迭代
+    n_iter = NULL,                       # 结局模型迭代（默认用 iter）
+    n_knots = 50,                        # cover.design 的 nd
+    verbose_every = 50) {
 
-  # Input validation
-  if (max(sel) > iter) stop("sel contains indices beyond total MCMC iterations!")
+  if (is.null(n_iter)) n_iter <- iter
   if (!"Y" %in% names(sim_popn)) stop("Data must contain outcome variable 'Y'")
+  if (!"id" %in% names(sim_popn)) stop("Data must contain 'id' column")
   if (n > nrow(sim_popn)) {
-    warning("n is larger than available data. Using all available data.")
+    warning("n larger than data; using all rows.")
     n <- nrow(sim_popn)
   }
+  if (max(sel) > max(iter, n_iter)) stop("sel contains indices beyond total MCMC iterations!")
 
-  message("Subsampling population...")
   set.seed(currind)
   dat_sim <- sim_popn[sample(sim_popn$id, n, replace = FALSE), ]
 
-  # Auto-detect dimensions and variable patterns
-  detection_results <- detect_variable_patterns(dat_sim, T)
-  p <- detection_results$p
-  Ldim <- detection_results$Ldim
-  td_covariate_names <- detection_results$td_covariate_names
-  baseline_td_vars <- detection_results$baseline_td_vars
+  # 名称工具
+  exposure_names_at_t <- function(t) paste0("logM", 1:p, "_", t)
+  all_exposure_names <- unlist(lapply(0:(T - 1), exposure_names_at_t))
+  mediator_names_at_t <- function(t) paste0(mediator_basenames, t)
+  all_mediator_names  <- unlist(lapply(1:(T - 1), mediator_names_at_t))
 
-  message("Detected data structure:")
-  message("  - Number of exposures per time point (p): ", p)
-  message("  - Number of time-dependent covariates per time point (Ldim): ", Ldim)
-  message("  - Time-dependent covariate names: ", paste(td_covariate_names, collapse = ", "))
-  message("  - Baseline TD variables: ", paste(baseline_td_vars, collapse = ", "))
+  # 校验列
+  needed_cols <- c("Y", "id", common_covariates, all_exposure_names, all_mediator_names)
+  miss <- setdiff(needed_cols, names(dat_sim))
+  if (length(miss) > 0) stop("Missing columns: ", paste(miss, collapse = ", "))
 
-  # Common covariates - use detected baseline TD variables
-  cov_names_common <- c("sex", baseline_td_vars)
-  X_common <- dat_sim[, cov_names_common]
+  X_common <- as.matrix(dplyr::select(dat_sim, dplyr::all_of(common_covariates)))
+  X_predict_common <- matrix(colMeans(X_common), nrow = 1)
 
-  fitkm_list <- list()
-  L_values_a <- list()
-  L_values_astar <- list()
+  # =========================
+  # 1) 拟合中介模型（逐列拟合）
+  # =========================
+  fitkm_list <- vector("list", T - 1)
+  names(fitkm_list) <- paste0("L", 1:(T - 1))
+  scaleinfo_list <- vector("list", T - 1)
+  names(scaleinfo_list) <- names(fitkm_list)
 
-  # Fit mediator models for each time point
+  message("Fitting mediator models ...")
   for (t in 1:(T - 1)) {
-    message(paste("Fitting mediator model L", t))
+    y_cols <- mediator_names_at_t(t)
+    y_mat  <- as.matrix(dat_sim[, y_cols, drop = FALSE])
+    colnames(y_mat) <- y_cols
 
-    # Get time-dependent covariate names for this time point
-    td_vars_t <- detection_results$td_vars_by_time[[t]]
+    # Z: 0..t-1 的暴露 + 1..t-1 的所有中介
+    Z_names <- unlist(lapply(0:(t - 1), exposure_names_at_t))
+    if (t > 1) Z_names <- c(Z_names, unlist(lapply(1:(t - 1), mediator_names_at_t)))
 
-    if (Ldim == 1) {
-      y_L <- dat_sim[, td_vars_t]
-    } else {
-      y_L <- as.matrix(dat_sim[, td_vars_t])
+    Z_raw <- as.matrix(dplyr::select(dat_sim, dplyr::all_of(Z_names)))
+    Z_sc  <- scale(Z_raw)
+    sc_center <- attr(Z_sc, "scaled:center")
+    sc_scale  <- attr(Z_sc, "scaled:scale")
+    scaleinfo_list[[t]] <- list(center = sc_center, scale = sc_scale)
+
+    # knots
+    nd_t <- min(n_knots, nrow(Z_sc) - 1)
+    if (nd_t < 2) stop("Not enough rows to place knots for mediator at t=", t)
+    knots_t <- fields::cover.design(Z_sc, nd = nd_t)$design
+
+    fit_list_t <- vector("list", ncol(y_mat))
+    for (li in seq_len(ncol(y_mat))) {
+      y_vec <- y_mat[, li]
+      message(sprintf("  - L%d: fitting %s (Z %d cols, knots %d)",
+                      t, colnames(y_mat)[li], ncol(Z_sc), nrow(knots_t)))
+      fit_list_t[[li]] <- bkmr::kmbayes(
+        y = y_vec,
+        Z = Z_sc,
+        X = X_common,
+        iter = iter,
+        varsel = TRUE,
+        verbose = FALSE,
+        knots = knots_t
+      )
+    }
+    fitkm_list[[t]] <- fit_list_t
+  }
+
+  # =========================
+  # 2) 结局模型 Y（缩放 + cover.design）
+  # =========================
+  message("Fitting outcome model Y ...")
+  Y <- dat_sim$Y
+  Zy_names <- c(all_exposure_names, all_mediator_names)
+  Zy_raw   <- as.matrix(dplyr::select(dat_sim, dplyr::all_of(Zy_names)))
+  Zy_sc    <- scale(Zy_raw)
+  scale_info_y <- list(
+    center = attr(Zy_sc, "scaled:center"),
+    scale  = attr(Zy_sc, "scaled:scale")
+  )
+
+  nd_y <- min(n_knots, nrow(Zy_sc) - 1)
+  if (nd_y < 2) stop("Not enough rows to place knots for outcome")
+  knots_y <- fields::cover.design(Zy_sc, nd = nd_y)$design
+
+  fit_y <- bkmr::kmbayes(
+    y = Y,
+    Z = Zy_sc,
+    X = X_common,
+    iter = n_iter,
+    varsel = TRUE,
+    verbose = FALSE,
+    knots = knots_y
+  )
+
+  # =========================
+  # 3) a / astar（分位数）
+  # =========================
+  A_all <- as.matrix(dplyr::select(dat_sim, dplyr::all_of(all_exposure_names)))
+  a_vec     <- apply(A_all, 2, quantile, probs = 0.25)
+  astar_vec <- apply(A_all, 2, quantile, probs = 0.75)
+
+  # 容器：每期每个 L 的 (length(sel) × K) 采样矩阵
+  L_samp_a     <- vector("list", T - 1)
+  L_samp_astar <- vector("list", T - 1)
+
+  scale_like <- function(newZ, center, scale) {
+    scale(newZ, center = center, scale = scale)
+  }
+
+  # =========================
+  # 4) 顺序采样各期中介（逐期累积历史）
+  # =========================
+  message("\n=== Sampling mediators sequentially ===")
+  start_time_global <- proc.time()
+
+  for (t in 1:(T - 1)) {
+    message(sprintf("\n--- Time point t=%d ---", t))
+    start_time_t <- proc.time()
+
+    # 训练时 Z 的列顺序：先暴露（至 t-1），再历史所有中介（至 t-1）
+    Z_names_t <- unlist(lapply(0:(t - 1), exposure_names_at_t))
+    if (t > 1) Z_names_t <- c(Z_names_t, unlist(lapply(1:(t - 1), mediator_names_at_t)))
+
+    # 对应 a / astar 的暴露块（长度 t*p）
+    a_exp_t     <- unlist(lapply(0:(t - 1), function(s) a_vec[exposure_names_at_t(s)]))
+    astar_exp_t <- unlist(lapply(0:(t - 1), function(s) astar_vec[exposure_names_at_t(s)]))
+
+    # 该期每个 L 的容器
+    L_samp_a_t     <- vector("list", length(mediator_basenames))
+    L_samp_astar_t <- vector("list", length(mediator_basenames))
+
+    for (li in seq_along(mediator_basenames)) {
+      message(sprintf("  Sampling %s at t=%d", mediator_basenames[li], t))
+
+      fit_li   <- fitkm_list[[t]][[li]]
+      scinfo_t <- scaleinfo_list[[t]]
+
+      # 初始化本 L 的采样矩阵
+      L_a_mat     <- matrix(NA, nrow = length(sel), ncol = K)
+      L_astar_mat <- matrix(NA, nrow = length(sel), ncol = K)
+
+      # MCMC 循环：遍历 sel 中的每个迭代
+      for (j in seq_along(sel)) {
+        # 提取历史中介在第 j 次迭代的值
+        if (t == 1) {
+          # t=1 时无历史中介
+          L_hist_a_j     <- NULL
+          L_hist_astar_j <- NULL
+        } else {
+          # t>1: 需要从 L_samp_a[[1:(t-1)]] 中提取第 j 行
+          L_hist_a_blocks     <- list()
+          L_hist_astar_blocks <- list()
+          for (tt in 1:(t - 1)) {
+            for (lj in seq_along(mediator_basenames)) {
+              # L_samp_a[[tt]][[lj]] 是 (length(sel) × K) 矩阵
+              L_hist_a_blocks[[length(L_hist_a_blocks) + 1]]         <- L_samp_a[[tt]][[lj]][j, ]
+              L_hist_astar_blocks[[length(L_hist_astar_blocks) + 1]] <- L_samp_astar[[tt]][[lj]][j, ]
+            }
+          }
+          # 转为 K × n_hist_meds 矩阵
+          L_hist_a_j     <- do.call(cbind, L_hist_a_blocks)
+          L_hist_astar_j <- do.call(cbind, L_hist_astar_blocks)
+        }
+
+        # 构建完整的 Z：[暴露块] + [历史中介块]
+        # 暴露块：K × (t*p)
+        Za_exp_mat     <- matrix(a_exp_t,     nrow = K, ncol = length(a_exp_t),     byrow = TRUE)
+        Zastar_exp_mat <- matrix(astar_exp_t, nrow = K, ncol = length(astar_exp_t), byrow = TRUE)
+
+        if (is.null(L_hist_a_j)) {
+          aL_a_j         <- Za_exp_mat
+          astarL_astar_j <- Zastar_exp_mat
+        } else {
+          aL_a_j         <- cbind(Za_exp_mat,     L_hist_a_j)
+          astarL_astar_j <- cbind(Zastar_exp_mat, L_hist_astar_j)
+        }
+
+        # 采样 K 个新值
+        for (k in 1:K) {
+          newz <- rbind(aL_a_j[k, ], astarL_astar_j[k, ])
+          newz_sc <- scale_like(newz, scinfo_t$center, scinfo_t$scale)
+
+          set.seed(j + 10000 + li)
+          L_pred <- bkmr::SamplePred(
+            fit_li,
+            Znew = newz_sc,
+            Xnew = X_predict_common,
+            sel = sel[j]
+          )
+          L_a_mat[j, k]     <- L_pred[, "znew1"]
+          L_astar_mat[j, k] <- L_pred[, "znew2"]
+        }
+
+        # 进度提示
+        if (j %% verbose_every == 0) {
+          end_time_temp <- proc.time()
+          elapsed_min <- round((end_time_temp - start_time_t)["elapsed"] / 60, 2)
+          message(sprintf("    iter %d/%d | time: %s min", j, length(sel), elapsed_min))
+        }
+      }
+
+      L_samp_a_t[[li]]     <- L_a_mat
+      L_samp_astar_t[[li]] <- L_astar_mat
     }
 
-    # Build exposure variable names for times 0 to t-1
-    exp_names <- unlist(lapply(0:(t - 1), function(s) paste0("logM", 1:p, "_", s)))
+    L_samp_a[[t]]     <- L_samp_a_t
+    L_samp_astar[[t]] <- L_samp_astar_t
+  }
 
-    # Add previous time-dependent covariates
-    if (t > 1) {
-      for (j in 1:(t - 1)) {
-        prev_td_vars <- detection_results$td_vars_by_time[[j]]
-        exp_names <- c(exp_names, prev_td_vars)
+  # =========================
+  # 5) 采样结局 Y
+  # =========================
+  message("\n=== Sampling outcome Y ===")
+  start_time_y <- proc.time()
+
+  Ya_mat     <- matrix(NA, nrow = length(sel), ncol = K)
+  Yastar_mat <- matrix(NA, nrow = length(sel), ncol = K)
+
+  # 暴露块维度
+  pT <- length(all_exposure_names)              # p * T
+  Ltotal <- length(all_mediator_names)          # (T-1) * |mediator_basenames|
+
+  for (j in seq_along(sel)) {
+    # 构建暴露块：K × pT
+    exp_a_block     <- matrix(a_vec[all_exposure_names],     nrow = K, ncol = pT, byrow = TRUE)
+    exp_astar_block <- matrix(astar_vec[all_exposure_names], nrow = K, ncol = pT, byrow = TRUE)
+
+    # 构建中介块：顺序为 t=1..T-1，每期按 mediator_basenames 顺序
+    L_a_blocks     <- list()
+    L_astar_blocks <- list()
+    for (t in 1:(T - 1)) {
+      for (li in seq_along(mediator_basenames)) {
+        L_a_blocks[[length(L_a_blocks) + 1]]         <- L_samp_a[[t]][[li]][j, ]
+        L_astar_blocks[[length(L_astar_blocks) + 1]] <- L_samp_astar[[t]][[li]][j, ]
       }
     }
+    L_a_mat     <- do.call(cbind, L_a_blocks)         # K × Ltotal
+    L_astar_mat <- do.call(cbind, L_astar_blocks)
 
-    Z <- dat_sim[, exp_names]
-    X <- X_common
+    # 组合：[暴露] + [中介]
+    aL_a_j         <- cbind(exp_a_block,     L_a_mat)
+    astarL_astar_j <- cbind(exp_astar_block, L_astar_mat)
 
-    # Scale predictors
-    scale_Z <- scale(Z)
-    attr_list <- list(center = attr(scale_Z, "scaled:center"),
-                      scale = attr(scale_Z, "scaled:scale"))
+    # 采样 K 个 Y
+    for (k in 1:K) {
+      newz <- rbind(aL_a_j[k, ], astarL_astar_j[k, ])
+      newz_sc <- scale_like(newz, scale_info_y$center, scale_info_y$scale)
 
-    # Set up knots if requested
-    knots <- if (use_knots) {
-      set.seed(1000)
-      fields::cover.design(scale_Z, nd = n_knots)$design
-    } else NULL
+      set.seed(j + 10000)
+      Y_jk <- bkmr::SamplePred(
+        fit_y,
+        Znew = newz_sc,
+        Xnew = X_predict_common,
+        sel = sel[j]
+      )
+      Ya_mat[j, k]     <- Y_jk[, "znew1"]
+      Yastar_mat[j, k] <- Y_jk[, "znew2"]
+    }
 
-    # Fit BKMR model
-    fit <- kmbayes(
-      y = if (is.matrix(y_L)) y_L[, 1] else y_L,
-      Z = scale_Z,
-      X = X,
-      iter = iter,
-      varsel = TRUE,
-      verbose = FALSE,
-      knots = knots
-    )
-    fitkm_list[[paste0("L", t)]] <- list(fit = fit, scale_info = attr_list)
+    # 进度提示
+    if (j %% verbose_every == 0) {
+      end_time_temp <- proc.time()
+      elapsed_min <- round((end_time_temp - start_time_y)["elapsed"] / 60, 2)
+      message(sprintf("  iter %d/%d | time: %s min", j, length(sel), elapsed_min))
+    }
   }
 
-  # Fit outcome model
-  message("Fitting outcome model Y")
-  Y <- dat_sim$Y
-
-  # Auto-detect all exposure and time-dependent covariate variables
-  all_exp_vars <- grep("^logM\\d+_\\d+$", names(dat_sim), value = TRUE)
-  all_td_vars <- unlist(detection_results$td_vars_by_time)
-  exp_names_y <- c(all_exp_vars, all_td_vars)
-
-  Z_y <- dat_sim[, exp_names_y]
-  scale_Zy <- scale(Z_y)
-  scale_info_y <- list(center = attr(scale_Zy, "scaled:center"),
-                       scale = attr(scale_Zy, "scaled:scale"))
-
-  knots_y <- if (use_knots) {
-    set.seed(1000)
-    fields::cover.design(scale_Zy, nd = n_knots * 2)$design
-  } else NULL
-
-  fit_y <- kmbayes(y = Y, Z = scale_Zy, X = X_common, iter = iter, varsel = TRUE,
-                   verbose = FALSE, knots = knots_y)
-  fitkm_y <- list(fit = fit_y, scale_info = scale_info_y)
-
-  # Compute counterfactual exposure vectors
-  message("Computing counterfactual exposure vectors...")
-  X.predict <- matrix(colMeans(X_common), nrow = 1)
-
-  # Predict mediators under different exposure scenarios
-  for (t in 1:(T - 1)) {
-    message(paste("Predicting mediator L", t))
-    scale_info <- fitkm_list[[paste0("L", t)]]$scale_info
-    fit <- fitkm_list[[paste0("L", t)]]$fit
-
-    cols_exp <- unlist(lapply(0:(t - 1), function(s) paste0("logM", 1:p, "_", s)))
-    cols_med <- if (t > 1) {
-      unlist(detection_results$td_vars_by_time[1:(t-1)])
-    } else character(0)
-    cols_all <- c(cols_exp, cols_med)
-
-    A_full <- dat_sim[, cols_all, drop = FALSE]
-    a_vec <- apply(A_full, 2, quantile, probs = 0.25)
-    astar_vec <- apply(A_full, 2, quantile, probs = 0.75)
-    newz <- rbind(a_vec[cols_all], astar_vec[cols_all])
-
-    Znew_scaled <- scale(newz, center = scale_info$center, scale = scale_info$scale)
-    L_pred <- SamplePred(fit, Znew = Znew_scaled, Xnew = X.predict, sel = sel)
-
-    L_values_a[[t]] <- as.vector(L_pred[, "znew1"])
-    L_values_astar[[t]] <- as.vector(L_pred[, "znew2"])
-  }
-
-  # Predict final outcome
-  message("Predicting outcome Y")
-  A_full_y <- dat_sim[, exp_names_y, drop = FALSE]
-  a_vec <- apply(A_full_y, 2, quantile, probs = 0.25)
-  astar_vec <- apply(A_full_y, 2, quantile, probs = 0.75)
-  Z_final <- rbind(a_vec[exp_names_y], astar_vec[exp_names_y])
-  Z_final_scaled <- scale(Z_final, center = fitkm_y$scale_info$center,
-                          scale = fitkm_y$scale_info$scale)
-  Y_pred <- SamplePred(fitkm_y$fit, Znew = Z_final_scaled, Xnew = X.predict, sel = sel)
-
-  Ya <- Y_pred[, "znew1"]
-  Yastar <- Y_pred[, "znew2"]
+  # =========================
+  # 6) 汇总结果
+  # =========================
+  Ya     <- rowMeans(Ya_mat)
+  Yastar <- rowMeans(Yastar_mat)
   diff_gBKMR <- mean(Yastar) - mean(Ya)
 
-  message(sprintf("g-BKMR effect estimate: %.4f", diff_gBKMR))
+  # 提取 beta 系数
+  beta_L <- lapply(seq_along(fitkm_list), function(t) {
+    lapply(seq_along(fitkm_list[[t]]), function(li) {
+      apply(fitkm_list[[t]][[li]]$beta[sel, , drop = FALSE], 2, mean)
+    })
+  })
+  beta_y <- apply(fit_y$beta[sel, , drop = FALSE], 2, mean)
 
-  # Generate plots if requested
-  if (make_plots) {
-    df_plot <- data.frame(Scenario = c("a", "astar"), Mean = c(mean(Ya), mean(Yastar)))
-    print(ggplot(df_plot, aes(x = Scenario, y = Mean)) +
-            geom_col(fill = "skyblue") +
-            theme_minimal() +
-            ggtitle("Counterfactual Means"))
-  }
+  end_time_global <- proc.time()
+  total_time_min <- round((end_time_global - start_time_global)["elapsed"] / 60, 2)
+  message(sprintf("\n=== Total time: %s minutes ===", total_time_min))
 
-  # Compile results
-  results <- list(
+  list(
     diff_gBKMR = diff_gBKMR,
     Ya = Ya,
     Yastar = Yastar,
-    beta_all = c(
-      unlist(lapply(fitkm_list, function(l) colMeans(l$fit$beta[sel, , drop = FALSE]))),
-      colMeans(fitkm_y$fit$beta[sel, , drop = FALSE])
-    ),
-    L_values_a = L_values_a,
-    L_values_astar = L_values_astar,
-    detection_info = detection_results,
-    fitted_models = if (save_exposure_preds) list(
-      confounders = fitkm_list,
-      outcome = fitkm_y
-    ) else NULL
+    Ya_mat = Ya_mat,
+    Yastar_mat = Yastar_mat,
+    L_samp_a = L_samp_a,
+    L_samp_astar = L_samp_astar,
+    fit_mediators = fitkm_list,
+    fit_y = fit_y,
+    beta_L = beta_L,
+    beta_y = beta_y,
+    meta = list(
+      T = T,
+      p = p,
+      mediator_basenames = mediator_basenames,
+      common_covariates = common_covariates,
+      K = K,
+      sel = sel,
+      iter = iter,
+      n_iter = n_iter,
+      n_knots = n_knots,
+      n = n,
+      exposure_names = all_exposure_names,
+      mediator_names = all_mediator_names,
+      total_time_minutes = total_time_min
+    )
   )
-
-  return(results)
 }
