@@ -158,9 +158,6 @@
 #'
 #' @export
 
-
-
-
 run_gbkmr_panel <- function(
     sim_popn,
     T = 5,                               #
