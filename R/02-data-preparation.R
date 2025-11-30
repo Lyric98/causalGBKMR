@@ -85,6 +85,32 @@ prepare_gbkmr_data <- function(
   Ldim <- td_covariates
   n_baseline <- baseline_covariates
 
+  # ========== MODIFICATION 1: Handle non-numeric matrices ==========
+  # Convert X matrix to numeric if it contains non-numeric columns
+  if (!is.numeric(X)) {
+    # X is a character matrix (common when as.matrix() is applied to mixed types)
+    # Convert each column appropriately
+    X_numeric <- matrix(nrow = nrow(X), ncol = ncol(X))
+    for (j in 1:ncol(X)) {
+      col_data <- X[, j]
+      # Try to convert to numeric
+      col_numeric <- suppressWarnings(as.numeric(col_data))
+      # If conversion fails (produces NAs where there weren't any), treat as factor
+      if (sum(is.na(col_numeric)) > sum(is.na(col_data))) {
+        # This is a categorical variable
+        col_numeric <- as.numeric(factor(col_data))
+      }
+      X_numeric[, j] <- col_numeric
+    }
+    X <- X_numeric
+  }
+
+  # Ensure Z is numeric
+  if (!is.numeric(Z)) {
+    Z <- apply(Z, 2, as.numeric)
+  }
+  # ================================================================
+
   # Input validation
   if (validate_input) {
     validate_user_matrices(Y, Z, X, T, Adim, Ldim, n_baseline)
@@ -139,7 +165,8 @@ prepare_gbkmr_data <- function(
     # Extract first time point of this time-dependent covariate from X
     first_timepoint_col <- l
     if (first_timepoint_col <= (ncol(X) - n_baseline)) {
-      baseline_val <- X[, first_timepoint_col] + rnorm(n, 0, sd = 0.1 * sd(X[, first_timepoint_col]))
+      base_values <- as.numeric(X[, first_timepoint_col])
+      baseline_val <- base_values + rnorm(n, 0, sd = 0.1 * sd(base_values, na.rm = TRUE))
     } else {
       baseline_val <- rnorm(n, mean = 0, sd = 1)
     }

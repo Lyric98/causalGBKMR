@@ -183,13 +183,22 @@ run_gbkmr_panel <- function(
   if (max(sel) > max(iter, n_iter)) stop("sel contains indices beyond total MCMC iterations!")
 
   set.seed(currind)
-  dat_sim <- sim_popn[sample(sim_popn$id, n, replace = FALSE), ]
+  #dat_sim <- sim_popn[sample(sim_popn$id, n, replace = FALSE), ]
+  dat_sim <- sim_popn[sample(seq_len(nrow(sim_popn)), n, replace = FALSE), ]
 
+  # ===== MODIFICATION 2: Add underscore to mediator names =====
   # 名称工具
   exposure_names_at_t <- function(t) paste0("logM", 1:p, "_", t)
   all_exposure_names <- unlist(lapply(0:(T - 1), exposure_names_at_t))
-  mediator_names_at_t <- function(t) paste0(mediator_basenames, t)
+  mediator_names_at_t <- function(t) paste0(mediator_basenames, "_", t)  # ADDED UNDERSCORE
   all_mediator_names  <- unlist(lapply(1:(T - 1), mediator_names_at_t))
+  # =======================================================
+
+  # # 名称工具
+  # exposure_names_at_t <- function(t) paste0("logM", 1:p, "_", t)
+  # all_exposure_names <- unlist(lapply(0:(T - 1), exposure_names_at_t))
+  # mediator_names_at_t <- function(t) paste0(mediator_basenames, t)
+  # all_mediator_names  <- unlist(lapply(1:(T - 1), mediator_names_at_t))
 
   # 校验列
   needed_cols <- c("Y", "id", common_covariates, all_exposure_names, all_mediator_names)
@@ -199,15 +208,50 @@ run_gbkmr_panel <- function(
   X_common <- as.matrix(dplyr::select(dat_sim, dplyr::all_of(common_covariates)))
   X_predict_common <- matrix(colMeans(X_common), nrow = 1)
 
-  # =========================
-  # 1) 拟合中介模型（逐列拟合）
-  # =========================
   fitkm_list <- vector("list", T - 1)
   names(fitkm_list) <- paste0("L", 1:(T - 1))
   scaleinfo_list <- vector("list", T - 1)
   names(scaleinfo_list) <- names(fitkm_list)
 
   message("Fitting mediator models ...")
+  # for (t in 1:(T - 1)) {
+  #   y_cols <- mediator_names_at_t(t)
+  #   y_mat  <- as.matrix(dat_sim[, y_cols, drop = FALSE])
+  #   colnames(y_mat) <- y_cols
+  #
+  #   # Z: 0..t-1 的暴露 + 1..t-1 的所有中介
+  #   Z_names <- unlist(lapply(0:(t - 1), exposure_names_at_t))
+  #   if (t > 1) Z_names <- c(Z_names, unlist(lapply(1:(t - 1), mediator_names_at_t)))
+  #
+  #   Z_raw <- as.matrix(dplyr::select(dat_sim, dplyr::all_of(Z_names)))
+  #   Z_sc  <- scale(Z_raw)
+  #   sc_center <- attr(Z_sc, "scaled:center")
+  #   sc_scale  <- attr(Z_sc, "scaled:scale")
+  #   scaleinfo_list[[t]] <- list(center = sc_center, scale = sc_scale)
+  #
+  #   # knots
+  #   nd_t <- min(n_knots, nrow(Z_sc) - 1)
+  #   if (nd_t < 2) stop("Not enough rows to place knots for mediator at t=", t)
+  #   knots_t <- fields::cover.design(Z_sc, nd = nd_t)$design
+  #
+  #   fit_list_t <- vector("list", ncol(y_mat))
+  #   for (li in seq_len(ncol(y_mat))) {
+  #     y_vec <- y_mat[, li]
+  #     message(sprintf("  - L%d: fitting %s (Z %d cols, knots %d)",
+  #                     t, colnames(y_mat)[li], ncol(Z_sc), nrow(knots_t)))
+  #     fit_list_t[[li]] <- bkmr::kmbayes(
+  #       y = y_vec,
+  #       Z = Z_sc,
+  #       X = X_common,
+  #       iter = iter,
+  #       varsel = TRUE,
+  #       verbose = FALSE,
+  #       knots = knots_t
+  #     )
+  #   }
+  #   fitkm_list[[t]] <- fit_list_t
+  # }
+
   for (t in 1:(T - 1)) {
     y_cols <- mediator_names_at_t(t)
     y_mat  <- as.matrix(dat_sim[, y_cols, drop = FALSE])
@@ -218,25 +262,69 @@ run_gbkmr_panel <- function(
     if (t > 1) Z_names <- c(Z_names, unlist(lapply(1:(t - 1), mediator_names_at_t)))
 
     Z_raw <- as.matrix(dplyr::select(dat_sim, dplyr::all_of(Z_names)))
-    Z_sc  <- scale(Z_raw)
+
+    rows_ok_ZX <- complete.cases(Z_raw, X_common)
+    if (sum(rows_ok_ZX) < 3) {
+      stop("Not enough complete Z/X rows to fit mediator model at t=", t)
+    }
+
+    Z_sc  <- scale(Z_raw[rows_ok_ZX, , drop = FALSE])
+
+    # ===== MODIFICATION 1-A: Check duplicates after scaling =====
+    n_unique <- nrow(unique(round(Z_sc, 10)))
+    if (n_unique < nrow(Z_sc)) {
+      Z_sc <- Z_sc + matrix(rnorm(length(Z_sc), 0, 1e-6), nrow = nrow(Z_sc))
+      n_unique <- nrow(unique(round(Z_sc, 10)))
+    }
+    # ===========================================================
+
     sc_center <- attr(Z_sc, "scaled:center")
     sc_scale  <- attr(Z_sc, "scaled:scale")
     scaleinfo_list[[t]] <- list(center = sc_center, scale = sc_scale)
 
-    # knots
-    nd_t <- min(n_knots, nrow(Z_sc) - 1)
+    # ===== MODIFICATION 1-B: Safe knots calculation =====
+    nd_t <- min(n_knots, n_unique - 1, floor(n_unique * 0.9))
     if (nd_t < 2) stop("Not enough rows to place knots for mediator at t=", t)
-    knots_t <- fields::cover.design(Z_sc, nd = nd_t)$design
 
+    knots_t <- tryCatch({
+      fields::cover.design(Z_sc, nd = nd_t)$design
+    }, error = function(e) {
+      message("  cover.design failed, using random subset")
+      Z_sc[sample(nrow(Z_sc), nd_t), , drop = FALSE]
+    })
+
+    # ===========================================================
+
+    # 真正拟合每个中介并存到 fitkm_list
     fit_list_t <- vector("list", ncol(y_mat))
     for (li in seq_len(ncol(y_mat))) {
       y_vec <- y_mat[, li]
-      message(sprintf("  - L%d: fitting %s (Z %d cols, knots %d)",
-                      t, colnames(y_mat)[li], ncol(Z_sc), nrow(knots_t)))
+
+      # ==== FIX-B: 针对该中介，再把 y 的 NA 过滤掉 ====
+      # 先限制到 Z/X 可用行，再去掉 y 的 NA
+      y_ok    <- y_vec[rows_ok_ZX]
+      mask_y  <- !is.na(y_ok)
+      if (sum(mask_y) < 3) {
+        stop(sprintf("Not enough complete rows for mediator %s at t=%d",
+                     colnames(y_mat)[li], t))
+      }
+      # 训练用的行索引（相对于原始 dat_sim）
+      valid_idx <- which(rows_ok_ZX)[mask_y]
+
+      # 用同一套 center/scale 标准化训练用 Z
+      Z_sc_fit <- scale(Z_raw[valid_idx, , drop = FALSE],
+                        center = sc_center, scale = sc_scale)
+      X_common_fit <- X_common[valid_idx, , drop = FALSE]
+      y_vec_fit    <- y_vec[valid_idx]
+      # ===============================================
+
+      message(sprintf("  - L%d: fitting %s (Z %d cols, knots %d, n=%d)",
+                      t, colnames(y_mat)[li], ncol(Z_sc_fit), nrow(knots_t), length(y_vec_fit)))
+
       fit_list_t[[li]] <- bkmr::kmbayes(
-        y = y_vec,
-        Z = Z_sc,
-        X = X_common,
+        y = y_vec_fit,
+        Z = Z_sc_fit,
+        X = X_common_fit,
         iter = iter,
         varsel = TRUE,
         verbose = FALSE,
@@ -244,24 +332,58 @@ run_gbkmr_panel <- function(
       )
     }
     fitkm_list[[t]] <- fit_list_t
-  }
+    # ===========================================================
+    }
+    # ===========================================================
 
   # =========================
   # 2) 结局模型 Y（缩放 + cover.design）
   # =========================
   message("Fitting outcome model Y ...")
   Y <- dat_sim$Y
+  # ===== MODIFICATION 3: Remove NA in outcome =====
+  valid_idx <- !is.na(Y)
+  if (sum(!valid_idx) > 0) {
+    message(sprintf("  Removing %d observations with NA in outcome Y", sum(!valid_idx)))
+    dat_sim <- dat_sim[valid_idx, ]
+    Y <- Y[valid_idx]
+    X_common <- X_common[valid_idx, , drop = FALSE]
+    X_predict_common <- matrix(colMeans(X_common), nrow = 1)
+  }
+  # =======================================================
+
+
   Zy_names <- c(all_exposure_names, all_mediator_names)
   Zy_raw   <- as.matrix(dplyr::select(dat_sim, dplyr::all_of(Zy_names)))
   Zy_sc    <- scale(Zy_raw)
+
+########################
+  n_unique_y <- nrow(unique(round(Zy_sc, 10)))
+  if (n_unique_y < nrow(Zy_sc)) {
+    Zy_sc <- Zy_sc + matrix(rnorm(length(Zy_sc), 0, 1e-6), nrow = nrow(Zy_sc))
+    n_unique_y <- nrow(unique(round(Zy_sc, 10)))
+  }
+########################
   scale_info_y <- list(
     center = attr(Zy_sc, "scaled:center"),
     scale  = attr(Zy_sc, "scaled:scale")
   )
 
-  nd_y <- min(n_knots, nrow(Zy_sc) - 1)
+  # nd_y <- min(n_knots, nrow(Zy_sc) - 1)
+  # if (nd_y < 2) stop("Not enough rows to place knots for outcome")
+  # knots_y <- fields::cover.design(Zy_sc, nd = nd_y)$design
+
+  # ===== MODIFICATION 2-B: Safe knots calculation =====
+  nd_y <- min(n_knots, n_unique_y - 1, floor(n_unique_y * 0.9))
   if (nd_y < 2) stop("Not enough rows to place knots for outcome")
-  knots_y <- fields::cover.design(Zy_sc, nd = nd_y)$design
+
+  knots_y <- tryCatch({
+    fields::cover.design(Zy_sc, nd = nd_y)$design
+  }, error = function(e) {
+    message("cover.design failed for outcome, using random subset")
+    Zy_sc[sample(nrow(Zy_sc), nd_y), , drop = FALSE]
+  })
+  # =======================================================
 
   fit_y <- bkmr::kmbayes(
     y = Y,
@@ -358,7 +480,18 @@ run_gbkmr_panel <- function(
 
         # 采样 K 个新值
         for (k in 1:K) {
-          newz <- rbind(aL_a_j[k, ], astarL_astar_j[k, ])
+          #newz <- rbind(aL_a_j[k, ], astarL_astar_j[k, ])
+          #=====================Nov9===============
+          # Explicitly maintain matrix structure
+          row_a_vec <- aL_a_j[k, ]
+          row_astar_vec <- astarL_astar_j[k, ]
+
+          row_a <- matrix(row_a_vec, nrow = 1, ncol = length(row_a_vec))
+          row_astar <- matrix(row_astar_vec, nrow = 1, ncol = length(row_astar_vec))
+
+          newz <- rbind(row_a, row_astar)
+          # newz is guaranteed to be a 2×n matrix
+          #============================================
           newz_sc <- scale_like(newz, scinfo_t$center, scinfo_t$scale)
 
           set.seed(j + 10000 + li)
