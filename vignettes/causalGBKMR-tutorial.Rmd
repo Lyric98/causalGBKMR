@@ -1,0 +1,604 @@
+---
+title: "Getting Started with causalGBKMR"
+author: "[Authors]"
+date: "`r Sys.Date()`"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{Getting Started with causalGBKMR}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4
+)
+```
+
+## Overview
+
+**causalGBKMR** implements the g-BKMR method for estimating causal effects of
+time-varying environmental mixtures. It combines:
+
+- **g-computation** to handle time-varying confounding
+- **Bayesian Kernel Machine Regression (BKMR)** to flexibly model nonlinear and
+  non-additive exposure-response relationships
+
+This vignette walks through the full workflow in three scenarios:
+
+1. **Basic analysis** --- small data, standard BKMR engine
+2. **Custom interventions** --- user-defined exposure contrasts
+3. **Large-sample analysis** --- using fastBKMR for computational efficiency
+
+---
+
+## 1. Installation
+
+### Step 1: Install R dependencies from CRAN
+
+```{r install-cran, eval=FALSE}
+install.packages(c("bkmr", "dplyr", "fields"))
+```
+
+### Step 2: Install causalGBKMR from GitHub
+
+```{r install-pkg, eval=FALSE}
+# If you don't have devtools or remotes:
+install.packages("devtools")
+
+# Install causalGBKMR
+devtools::install_github("Lyric98/causalGBKMR")
+```
+
+### Step 3 (optional): Install fastBKMR for large datasets
+
+Only needed if your sample size is large (n > 2000). See Scenario 3 below.
+
+```{r install-fbkmr, eval=FALSE}
+remotes::install_github("junwei-lu/fbkmr")
+```
+
+### Verify installation
+
+```{r verify-install, eval=FALSE}
+library(causalGBKMR)
+?gbkmr_run
+```
+
+```{r load-packages, message=FALSE, warning=FALSE, echo=FALSE}
+# Internal: load for vignette building
+library(bkmr)
+library(dplyr)
+library(fields)
+r_files <- sort(list.files("../R", pattern = "^\\d.*\\.R$", full.names = TRUE))
+for (f in r_files) source(f)
+```
+
+---
+
+## 2. Background: What Problem Does g-BKMR Solve?
+
+In environmental health studies we often have:
+
+- **Multiple correlated exposures** (e.g., arsenic, lead, cadmium) measured at
+  **multiple time points**
+- **Time-dependent confounders** (e.g., BMI, blood pressure) that are affected
+  by past exposures and also influence the outcome
+- Interest in **the causal effect of the entire exposure mixture history** on a
+  health outcome
+
+Standard regression would suffer from time-varying confounding bias.
+The g-formula addresses this, and BKMR provides the flexible
+exposure-response surface. g-BKMR puts them together.
+
+**The causal estimand:**
+
+$$
+\text{ATE} = E[Y^{\bar{a}^*}] - E[Y^{\bar{a}}]
+$$
+
+where $\bar{a}$ and $\bar{a}^*$ are two exposure histories (by default, all
+exposures at the 25th vs. 75th percentile).
+
+---
+
+## 3. Preparing Your Data
+
+### What you need
+
+causalGBKMR expects three inputs:
+
+| Input | Type | Dimensions | Description |
+|-------|------|-----------|-------------|
+| **Y** | numeric vector | length $n$ | Outcome (continuous or binary) |
+| **Z** | numeric matrix | $n \times (p \times T)$ | Exposures: $p$ mixture components at $T$ time points |
+| **X** | numeric matrix | $n \times (L \times T + B)$ | $L$ time-dependent covariates at $T$ time points, plus $B$ baseline covariates |
+
+### How to organize your columns
+
+**Exposure matrix Z** --- group by time point, then by component:
+
+```
+[Mix1_t0, Mix2_t0, ..., Mixp_t0, Mix1_t1, ..., Mixp_t(T-1)]
+```
+
+**Covariate matrix X** --- time-dependent covariates first, then baseline:
+
+```
+[TDcov1_t1, TDcov2_t1, ..., TDcovL_t1, ..., TDcovL_t(T-1), Baseline1, ..., BaselineB]
+```
+
+> **Important:** Exposures (Z) include baseline $t=0$ through $t=T-1$.
+> Time-dependent covariates (X) start at $t=1$ --- they are measured *after*
+> baseline exposure. Baseline covariates (e.g., sex, age) go at the end of X.
+
+### Data preparation tips
+
+Before running causalGBKMR, we recommend the following checks:
+
+```{r data-tips, eval=FALSE}
+# 1. Check for missing data -- g-BKMR can handle some NAs but complete
+#    cases are preferred
+cat("Missing in Y:", sum(is.na(Y)), "\n")
+cat("Missing in Z:", sum(is.na(Z)), "\n")
+cat("Missing in X:", sum(is.na(X)), "\n")
+
+# 2. Check exposure distributions -- environmental data is often right-skewed.
+#    The package log-transforms by default (log_transform_mixtures = TRUE).
+#    If your data is already log-transformed, set log_transform_mixtures = FALSE.
+apply(Z, 2, summary)
+
+# 3. Check for zero or negative values in exposures -- log(0) is undefined.
+#    The package handles this by adding a small constant, but it's better to
+#    address it beforehand (e.g., replace with LOD/sqrt(2)).
+cat("Zeros in Z:", sum(Z == 0, na.rm = TRUE), "\n")
+cat("Negatives in Z:", sum(Z < 0, na.rm = TRUE), "\n")
+
+# 4. Check correlations between exposures -- high correlation is expected
+#    (and handled by BKMR), but extreme collinearity (r > 0.99) may cause
+#    numerical issues.
+cor_mat <- cor(Z, use = "complete.obs")
+cat("Max pairwise correlation:", max(abs(cor_mat[upper.tri(cor_mat)])), "\n")
+
+# 5. Check sample size relative to model complexity.
+#    Rule of thumb: you need at least 10 observations per predictor in the
+#    largest BKMR model (the outcome model, which has p*T + L*(T-1) Z columns).
+n_predictors_outcome <- ncol(Z) + ncol(X) - n_baseline
+cat("Outcome model has", n_predictors_outcome, "predictors\n")
+cat("Suggested minimum n:", 10 * n_predictors_outcome, "\n")
+```
+
+### Converting from common data formats
+
+If your data is in long format (one row per person-visit), you need to reshape
+to wide format first:
+
+```{r long-to-wide, eval=FALSE}
+library(tidyr)
+
+# Example: long-format data with columns: id, visit, arsenic, lead, bmi, sex, outcome
+wide_data <- long_data %>%
+  pivot_wider(
+    id_cols = c(id, sex, outcome),
+    names_from = visit,
+    values_from = c(arsenic, lead, bmi),
+    names_sep = "_t"
+  )
+
+# Then extract matrices
+Z <- as.matrix(wide_data[, c("arsenic_t0", "lead_t0", "arsenic_t1", "lead_t1")])
+X <- cbind(
+  as.matrix(wide_data[, c("bmi_t1")]),   # TD covariates (start at t1)
+  wide_data$sex                            # baseline
+)
+Y <- wide_data$outcome
+```
+
+---
+
+## 4. Scenario 1: Basic Analysis (Standard BKMR)
+
+This is the standard use case for moderate sample sizes ($n < 2000$).
+
+### Step 1: Generate example data
+
+```{r scenario1-data}
+set.seed(123)
+n <- 200
+T_points <- 3   # 3 time points (t=0, t=1, t=2)
+p <- 2           # 2 exposures (e.g., arsenic, lead)
+Ldim <- 1        # 1 time-dependent confounder (e.g., waist circumference)
+n_baseline <- 1  # 1 baseline covariate (e.g., sex)
+
+# Outcome
+Y <- rnorm(n, mean = 50, sd = 10)
+
+# Exposure matrix: 2 metals x 3 time points = 6 columns
+# Using lognormal to mimic environmental concentrations
+Z <- matrix(rlnorm(n * p * T_points, meanlog = 1, sdlog = 0.5),
+            nrow = n, ncol = p * T_points)
+
+# Covariate matrix: 1 TD covariate x 3 time points + 1 baseline = 4 columns
+waist_base <- rnorm(n, 85, 12)
+X <- cbind(
+  waist_base + rnorm(n, 1, 2),    # waist at t=1
+  waist_base + rnorm(n, 2, 2),    # waist at t=2
+  waist_base + rnorm(n, 3, 2),    # waist at t=3
+  rbinom(n, 1, 0.5)               # sex (baseline)
+)
+
+cat("Y:", length(Y), "observations\n")
+cat("Z:", nrow(Z), "x", ncol(Z), "(", p, "exposures x", T_points, "time points)\n")
+cat("X:", nrow(X), "x", ncol(X), "(", Ldim, "TD cov x", T_points, "times +",
+    n_baseline, "baseline)\n")
+```
+
+### Step 2: Prepare data with `prepare_gbkmr_data()`
+
+This function converts your matrices into the internal data frame format. It
+handles variable naming, optional log-transformation, and input validation.
+
+```{r scenario1-prepare}
+prepared_data <- prepare_gbkmr_data(
+  Y = Y,
+  Z = Z,
+  X = X,
+  time_points = T_points,
+  mixture_components = p,
+  td_covariates = Ldim,
+  baseline_covariates = n_baseline,
+  td_covariate_names = "waist",        # give meaningful names to TD covariates
+  log_transform_mixtures = TRUE         # log-transform (recommended for raw concentrations)
+)
+
+# Inspect the result
+head(prepared_data[, 1:8])
+```
+
+The output data frame has columns in this order: baseline covariates, baseline
+TD covariates, exposures at each time point, TD covariates at each time point,
+outcome, and subject id.
+
+### Step 3: Verify variable detection
+
+Before running the analysis, check that the package correctly detected your
+variable structure:
+
+```{r scenario1-detect}
+detection <- detect_variable_patterns(prepared_data, T = T_points)
+print(detection)
+```
+
+This should show:
+
+- `p` = number of exposures per time point
+- `Ldim` = number of time-dependent covariates per time point
+- The base names of your TD covariates
+
+If the detection is wrong, check your column naming or provide explicit
+parameters to `run_gbkmr_panel()` instead of using `gbkmr_run()`.
+
+### Step 4: Run g-BKMR analysis
+
+**For real analyses**, use production-quality settings:
+
+```{r scenario1-run-production, eval=FALSE}
+results <- gbkmr_run(
+  data = prepared_data,
+  outcome = "Y",
+  outcome_type = "continuous",
+  time_points = T_points,
+  iter = 15000,                        # MCMC iterations (at least 10000)
+  n = min(500, nrow(prepared_data)),   # subsample for BKMR fitting
+  K = 1000,                            # Monte Carlo samples for g-computation
+  n_knots = 50,                        # kernel approximation knots
+  engine = "bkmr",                     # standard BKMR
+  verbose = TRUE
+)
+
+print(results)
+summary(results)
+```
+
+For this vignette, we use small parameters so it finishes in seconds:
+
+```{r scenario1-run-tiny}
+results <- gbkmr_run(
+  data = prepared_data,
+  outcome = "Y",
+  outcome_type = "continuous",
+  time_points = T_points,
+  iter = 500,       # tiny for demo only!
+  n = 50,
+  K = 10,
+  n_knots = 15,
+  engine = "bkmr",
+  verbose = TRUE
+)
+```
+
+### Step 5: Interpret results
+
+```{r scenario1-results}
+# The causal effect estimate (ATE)
+cat("Average Treatment Effect:", round(results$causal_effect$estimate, 4), "\n")
+cat("95% Credible Interval: (",
+    round(results$causal_effect$lower, 4), ",",
+    round(results$causal_effect$upper, 4), ")\n")
+
+# Counterfactual means
+cat("\nE[Y | low exposure]:", round(results$counterfactual_means$low, 4), "\n")
+cat("E[Y | high exposure]:", round(results$counterfactual_means$high, 4), "\n")
+
+# Variable importance (beta coefficients from outcome model)
+cat("\nVariable importance (outcome model betas):\n")
+print(round(results$variable_importance, 4))
+```
+
+### Step 6: Diagnostic plots
+
+Always check convergence before trusting results.
+
+```{r scenario1-diagnostics, fig.width=7, fig.height=4}
+raw <- results$raw_results
+
+# Posterior distribution of ATE
+diff_posterior <- raw$Yastar - raw$Ya
+hist(diff_posterior, breaks = 30, col = "steelblue", border = "white",
+     main = "Posterior Distribution of ATE",
+     xlab = "ATE (high - low exposure)")
+abline(v = results$causal_effect$estimate, col = "red", lwd = 2)
+abline(v = 0, col = "gray40", lty = 2, lwd = 2)
+legend("topright", c("Estimate", "Zero"), col = c("red", "gray40"),
+       lty = c(1, 2), lwd = 2, bty = "n")
+```
+
+```{r scenario1-trace, fig.width=7, fig.height=3.5}
+# Trace plots for convergence
+par(mfrow = c(1, 2))
+plot(raw$Ya, type = "l", col = "steelblue",
+     main = "E[Y | low exposure]", ylab = "Y(a)", xlab = "MCMC iteration")
+plot(raw$Yastar, type = "l", col = "tomato",
+     main = "E[Y | high exposure]", ylab = "Y(a*)", xlab = "MCMC iteration")
+par(mfrow = c(1, 1))
+```
+
+**What to look for:** Trace plots should look like "hairy caterpillars" ---
+stationary with no trends. If you see drift or slow mixing, increase `iter`.
+
+---
+
+## 5. Scenario 2: Custom Intervention Levels
+
+By default, g-BKMR compares all exposures at the 25th percentile (low) vs.
+75th percentile (high). You can customize this in two ways.
+
+### Option A: Change the quantile probabilities
+
+```{r scenario2-quantiles, eval=FALSE}
+# Compare 10th vs 90th percentile (wider contrast)
+results_wide <- gbkmr_run(
+  data = prepared_data,
+  outcome = "Y",
+  outcome_type = "continuous",
+  time_points = T_points,
+  a_probs = c(0.10, 0.90),      # 10th vs 90th percentile
+  iter = 15000, n = 500, K = 1000
+)
+```
+
+### Option B: Specify exact exposure values
+
+Use this when you want to compare specific exposure scenarios (e.g., a
+regulatory standard vs. observed levels). You need `run_gbkmr_panel()` for this:
+
+```{r scenario2-custom, eval=FALSE}
+# Build named vectors matching exposure column names
+exposure_names <- paste0("logM", rep(1:2, 3), "_", rep(0:2, each = 2))
+
+# Low scenario: all exposures at log(1) (i.e., concentration = 1)
+a_low <- setNames(rep(0, length(exposure_names)), exposure_names)
+
+# High scenario: all exposures at log(5) (i.e., concentration ~ 5)
+a_high <- setNames(rep(log(5), length(exposure_names)), exposure_names)
+
+results_custom <- run_gbkmr_panel(
+  sim_popn = prepared_data,
+  T = T_points,
+  p = 2,
+  mediator_basenames = "waist",
+  common_covariates = c("sex", "waist_0"),
+  a_vals = a_low,
+  astar_vals = a_high,
+  iter = 15000, n = 500, K = 1000, n_knots = 50
+)
+
+cat("ATE:", results_custom$diff_gBKMR, "\n")
+```
+
+---
+
+## 6. Scenario 3: Large-Sample Analysis with fastBKMR
+
+When sample size is large ($n > 2000$), standard BKMR becomes computationally
+expensive because the Gaussian process kernel scales as $O(n^3)$. **fastBKMR**
+(via the `fbkmr` package) addresses this by splitting data into subsets, fitting
+BKMR on each in parallel, and combining results.
+
+### When to use fastBKMR
+
+| Sample size | Recommendation |
+|-------------|---------------|
+| $n < 1000$ | Standard BKMR (`engine = "bkmr"`) |
+| $1000 < n < 3000$ | Either works; try BKMR with `n_knots` first |
+| $n > 3000$ | Use fastBKMR (`engine = "fastbkmr"`) |
+
+### Install fastBKMR
+
+```{r scenario3-install, eval=FALSE}
+# fastBKMR is not on CRAN -- install from GitHub
+remotes::install_github("junwei-lu/fbkmr")
+
+# Verify
+library(fbkmr)
+?skmbayes
+```
+
+### Running with fastBKMR
+
+The interface is **identical** to standard BKMR --- just change `engine`:
+
+```{r scenario3-run, eval=FALSE}
+# Suppose you have a large prepared dataset (n = 6000)
+results_fast <- gbkmr_run(
+  data = large_prepared_data,
+  outcome = "Y",
+  outcome_type = "continuous",
+  time_points = 3,
+  engine = "fastbkmr",           # <-- the only change needed
+  n_subset = 10,                 # split data into 10 subsets (~600 obs each)
+  n_cores = 10,                  # parallel cores (ideally one per subset)
+  iter = 15000,
+  n = nrow(large_prepared_data), # use all data (fastBKMR handles the scaling)
+  K = 1000,
+  verbose = TRUE
+)
+
+print(results_fast)
+```
+
+### Key parameters for fastBKMR
+
+| Parameter | Default | Description |
+|-----------|---------|-------------|
+| `engine` | `"bkmr"` | Set to `"fastbkmr"` to enable |
+| `n_subset` | `10` | Number of data subsets. More subsets = faster per-subset fitting, but slightly more variance |
+| `n_cores` | `10` | Parallel cores. Set to `n_subset` for maximum parallelism |
+
+**Tip on choosing `n_subset`:** Each subset should have at least ~200
+observations. So for $n = 6000$, `n_subset = 10` gives ~600 per subset
+(good). For $n = 2000$, try `n_subset = 5` to keep ~400 per subset.
+
+### How it works under the hood
+
+1. `fbkmr::skmbayes()` splits the data into `n_subset` random subsets
+2. Standard BKMR (`bkmr::kmbayes()`) is fit independently on each subset, in
+   parallel across `n_cores` cores
+3. During g-computation, the package calls `bkmr::SamplePred()` on a
+   **randomly selected subset** at each MCMC iteration
+4. Results (betas, predictions) are aggregated across subsets
+
+> **Technical note:** `bkmr::SamplePred()` works on individual subset fits
+> (class `bkmrfit`) but fails on the full `skmbayes` list object. causalGBKMR
+> handles this automatically --- no user action needed.
+
+### Advanced: using `run_gbkmr_panel()` directly
+
+For full control over model fitting, you can bypass `gbkmr_run()` and call the
+core function:
+
+```{r scenario3-panel, eval=FALSE}
+results_fast <- run_gbkmr_panel(
+  sim_popn = large_prepared_data,
+  T = 3,
+  p = 4,
+  mediator_basenames = c("waist", "bmi"),
+  common_covariates = c("sex", "waist_0", "bmi_0"),
+  engine = "fastbkmr",
+  n_subset = 10,
+  n_cores = 10,
+  n = 6000,
+  iter = 15000,
+  sel = seq(12000, 15000, by = 25),   # post-burn-in samples
+  K = 1000,
+  verbose_every = 20
+)
+```
+
+---
+
+## 7. Tips and Best Practices
+
+### Parameter tuning guide
+
+| Goal | Adjustment |
+|------|-----------|
+| **Faster prototyping** | Reduce `iter` (5000), `K` (200), `n` (200) |
+| **More stable estimates** | Increase `K` (2000) and `length(sel)` |
+| **Memory issues** | Reduce `n_knots` (30) or `n` |
+| **Large dataset** | Switch to `engine = "fastbkmr"` |
+| **Binary outcome** | Set `outcome_type = "binary"` |
+
+### Recommended production settings
+
+```{r production, eval=FALSE}
+# Standard BKMR (n < 2000)
+results <- gbkmr_run(
+  data = prepared_data,
+  time_points = T_points,
+  iter = 20000,
+  n = min(800, nrow(prepared_data)),
+  K = 1000,
+  n_knots = 50,
+  engine = "bkmr"
+)
+
+# fastBKMR (n > 2000)
+results <- gbkmr_run(
+  data = prepared_data,
+  time_points = T_points,
+  iter = 15000,
+  n = nrow(prepared_data),   # use full data
+  K = 1000,
+  engine = "fastbkmr",
+  n_subset = 10,
+  n_cores = 10
+)
+```
+
+### Common pitfalls
+
+1. **Forgetting to log-transform exposures.** Environmental concentrations are
+   typically right-skewed. `prepare_gbkmr_data()` sets
+   `log_transform_mixtures = TRUE` by default. If your data is *already*
+   log-transformed, set it to `FALSE` to avoid double-transforming.
+
+2. **Too few MCMC iterations.** With `iter = 5000`, BKMR may not converge.
+   Use at least `iter = 15000` for real analyses. Always check trace plots
+   (see Scenario 1, Step 6).
+
+3. **`sel` exceeds `iter`.** If you set `sel = seq(22000, 24000, ...)` but
+   `iter = 15000`, you will get an error. The package auto-calculates `sel`
+   when using `gbkmr_run()`, but with `run_gbkmr_panel()` you must ensure
+   `max(sel) <= iter`.
+
+4. **Knot warnings.** Messages like "Number of nearest neighbors reduced" from
+   `fields::cover.design()` are harmless when $n$ is small relative to
+   `n_knots`. Reduce `n_knots` if they bother you.
+
+5. **Columns below the limit of detection (LOD).** For values below LOD,
+   replace with `LOD / sqrt(2)` before passing to causalGBKMR. Do not leave
+   as zero (log(0) is undefined).
+
+---
+
+## 8. Function Reference
+
+| Function | Purpose | When to use |
+|----------|---------|-------------|
+| `prepare_gbkmr_data()` | Convert matrices (Y, Z, X) to g-BKMR format | Always --- first step |
+| `validate_user_matrices()` | Check input dimensions and types | Debugging data issues |
+| `detect_variable_patterns()` | Auto-detect variable structure | Before running, to verify setup |
+| `gbkmr_run()` | High-level analysis wrapper | Recommended for most users |
+| `run_gbkmr_panel()` | Core g-BKMR with full parameter control | Advanced: custom interventions, fine-tuning |
+
+---
+
+## Session Info
+
+```{r session-info}
+sessionInfo()
+```

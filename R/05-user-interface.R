@@ -1,162 +1,114 @@
 #' @file 05-user-interface.R
-#' @title User-friendly interface functions for g-BKMR
-#' @description High-level functions that provide a clean, user-friendly API
-#' for g-BKMR analysis. These functions handle parameter defaults and result formatting.
+#' @title User-friendly interface for g-BKMR
 
-#' Run g-BKMR analysis with user-friendly interface
+#' Run g-BKMR analysis
 #'
-#' @description Main user interface for g-BKMR analysis. This function provides
-#' a simplified API for conducting g-BKMR analysis with sensible defaults and
-#' user-friendly output formatting.
+#' @param data Data frame in g-BKMR format (see \code{\link{prepare_gbkmr_data}}).
+#' @param outcome Character. Outcome variable name (default: "Y").
+#' @param outcome_type Character. "continuous" or "binary".
+#' @param time_points Integer. Number of time points.
+#' @param currind Integer. Random seed.
+#' @param sel Numeric vector. Post-burn-in MCMC indices (auto-calculated if NULL).
+#' @param n Integer. Sample size (default: min(500, nrow(data))).
+#' @param K Integer. Monte Carlo samples.
+#' @param iter Integer. Total MCMC iterations.
+#' @param n_knots Integer. Knots for kernel approximation.
+#' @param engine Character. "bkmr" or "fastbkmr".
+#' @param n_subset Integer. Number of subsets for fastBKMR.
+#' @param n_cores Integer. Number of cores for fastBKMR.
+#' @param a_probs Numeric vector of length 2. Quantile probabilities for
+#'   intervention levels (default: c(0.25, 0.75)).
+#' @param a_vals Named numeric vector or NULL. Custom low-exposure values.
+#' @param astar_vals Named numeric vector or NULL. Custom high-exposure values.
+#' @param verbose Logical. Print progress.
 #'
-#' @param data Data frame. Input data in g-BKMR format. Can be prepared using
-#'   \code{\link{prepare_gbkmr_data}}.
-#' @param outcome Character. Name of the outcome variable (default: "Y").
-#' @param outcome_type Character. Type of outcome: "continuous" or "binary" (default: "continuous").
-#' @param time_points Integer. Number of time points in the study.
-#' @param currind Integer. Random seed for reproducibility (default: 1).
-#' @param sel Numeric vector. MCMC iterations to use for inference (default: auto-calculated).
-#' @param n Integer. Sample size for analysis (default: min(500, nrow(data))).
-#' @param K Integer. Number of Monte Carlo samples (default: 1000).
-#' @param iter Integer. Total MCMC iterations (default: 15000).
-#' @param parallel Logical. Whether to use parallel processing (default: TRUE).
-#' @param use_knots Logical. Whether to use kernel approximation (default: TRUE).
-#' @param n_knots Integer. Number of knots for approximation (default: 50).
-#' @param make_plots Logical. Whether to generate diagnostic plots (default: FALSE).
-#' @param verbose Logical. Whether to print detailed progress (default: TRUE).
-#'
-#' @return An object of class "gbkmr_results" containing:
-#' \describe{
-#'   \item{causal_effect}{List with estimate, lower CI, and upper CI}
-#'   \item{counterfactual_means}{List with low and high exposure means}
-#'   \item{variable_importance}{Numeric vector of regression coefficients}
-#'   \item{detection_info}{Information about detected variable structure}
-#'   \item{raw_results}{Complete results from the core analysis}
-#'   \item{call_info}{Information about the function call}
-#' }
-#'
-#' @details
-#' This function is the main entry point for users. It:
-#' \enumerate{
-#'   \item Validates inputs and sets sensible defaults
-#'   \item Calls the core g-BKMR analysis function
-#'   \item Formats results for user-friendly interpretation
-#'   \item Provides confidence intervals and summary statistics
-#' }
-#'
-#' The analysis estimates the causal effect of changing all exposures from their
-#' 25th percentile to their 75th percentile, while properly accounting for
-#' time-varying confounding.
-#'
-#' @examples
-#' \dontrun{
-#' # Prepare your data first
-#' prepared_data <- prepare_gbkmr_data(
-#'   Y = Y, Z = Z, X = X,
-#'   time_points = 3,
-#'   mixture_components = 2,
-#'   td_covariates = 1,
-#'   baseline_covariates = 1
-#' )
-#'
-#' # Run g-BKMR analysis
-#' results <- gbkmr_run(
-#'   data = prepared_data,
-#'   time_points = 3,
-#'   verbose = TRUE
-#' )
-#'
-#' # View results
-#' print(results)
-#' summary(results)
-#'
-#' # Extract specific components
-#' causal_effect <- results$causal_effect$estimate
-#' confidence_interval <- c(results$causal_effect$lower, results$causal_effect$upper)
-#' }
-#'
-#' @seealso \code{\link{prepare_gbkmr_data}} for data preparation,
-#'   \code{\link{detect_variable_patterns}} for variable detection
-#'
+#' @return Object of class "gbkmr_results".
 #' @export
 gbkmr_run <- function(
     data,
     outcome = "Y",
     outcome_type = c("continuous", "binary"),
     time_points,
-    # Optional advanced parameters
     currind = 1,
     sel = NULL,
     n = NULL,
     K = 1000,
     iter = 15000,
-    parallel = TRUE,
-    use_knots = TRUE,
     n_knots = 50,
-    make_plots = FALSE,
+    engine = c("bkmr", "fastbkmr"),
+    n_subset = 10,
+    n_cores = 10,
+    a_probs = c(0.25, 0.75),
+    a_vals = NULL,
+    astar_vals = NULL,
     verbose = TRUE
 ) {
 
-  # Validate inputs
   outcome_type <- match.arg(outcome_type)
-
+  engine <- match.arg(engine)
   if (missing(data)) stop("Data must be provided")
   if (missing(time_points)) stop("Number of time points must be provided")
   if (!outcome %in% names(data)) stop("Outcome variable '", outcome, "' not found in data")
 
-  # Set intelligent defaults
-  if (is.null(sel)) sel <- seq(iter * 0.6, iter, by = 25)
+  if (is.null(sel)) sel <- seq(floor(iter * 0.6), iter, by = 25)
   if (is.null(n)) n <- min(500, nrow(data))
 
   if (verbose) {
     cat("Starting g-BKMR analysis...\n")
-    cat("Data dimensions:", nrow(data), "subjects,", ncol(data), "variables\n")
-    cat("Time points:", time_points, "\n")
-    cat("Sample size for analysis:", n, "\n")
-    cat("MCMC iterations:", iter, "\n")
+    cat("  Engine:", engine, "| n:", n, "| iter:", iter,
+        "| T:", time_points, "\n")
+    if (engine == "fastbkmr")
+      cat("  fastBKMR: n_subset=", n_subset, ", n_cores=", n_cores, "\n")
+    cat("  Intervention: a_probs =", a_probs[1], "/", a_probs[2], "\n")
   }
 
-  # Run the core g-BKMR function with auto-detection
+  # Detect variable structure
+  detection <- detect_variable_patterns(data, time_points)
+
   results <- run_gbkmr_panel(
     sim_popn = data,
     T = time_points,
+    p = detection$p,
+    mediator_basenames = detection$td_covariate_names,
+    common_covariates = c("sex", detection$baseline_td_vars),
     currind = currind,
     sel = sel,
     n = n,
     K = K,
     iter = iter,
-    parallel = parallel,
-    save_exposure_preds = TRUE,
-    return_ci = TRUE,
-    make_plots = make_plots,
-    use_knots = use_knots,
-    n_knots = n_knots
+    n_knots = n_knots,
+    engine = engine,
+    n_subset = n_subset,
+    n_cores = n_cores,
+    a_probs = a_probs,
+    a_vals = a_vals,
+    astar_vals = astar_vals
   )
 
-  # Format results for user-friendly output
+  # Format output
   causal_effect <- list(
     estimate = results$diff_gBKMR,
     lower = quantile(results$Yastar - results$Ya, 0.025, na.rm = TRUE),
     upper = quantile(results$Yastar - results$Ya, 0.975, na.rm = TRUE)
   )
 
-  counterfactual_means <- list(
-    low = mean(results$Ya, na.rm = TRUE),
-    high = mean(results$Yastar, na.rm = TRUE)
-  )
-
   formatted_results <- list(
     causal_effect = causal_effect,
-    counterfactual_means = counterfactual_means,
-    variable_importance = results$beta_all,
-    detection_info = results$detection_info,
+    counterfactual_means = list(
+      low  = mean(results$Ya, na.rm = TRUE),
+      high = mean(results$Yastar, na.rm = TRUE)
+    ),
+    variable_importance = results$beta_y,
+    detection_info = detection,
     raw_results = results,
     call_info = list(
       outcome = outcome,
       outcome_type = outcome_type,
       time_points = time_points,
       sample_size = n,
-      mcmc_iterations = iter
+      mcmc_iterations = iter,
+      engine = engine,
+      a_probs = a_probs
     )
   )
 
@@ -164,98 +116,42 @@ gbkmr_run <- function(
 
   if (verbose) {
     cat("Analysis complete!\n")
-    cat("Detected", results$detection_info$p, "exposures per time point\n")
-    cat("Detected", results$detection_info$Ldim, "time-dependent covariates per time point\n")
-    if (length(results$detection_info$td_covariate_names) > 0) {
-      cat("TD covariate names:", paste(results$detection_info$td_covariate_names, collapse = ", "), "\n")
-    }
-    cat("Causal effect estimate:", round(causal_effect$estimate, 4), "\n")
-    cat("95% CI: (", round(causal_effect$lower, 4), ",", round(causal_effect$upper, 4), ")\n")
+    cat("  ATE:", round(causal_effect$estimate, 4),
+        "  95% CI: (", round(causal_effect$lower, 4), ",",
+        round(causal_effect$upper, 4), ")\n")
   }
 
-  return(formatted_results)
+  formatted_results
 }
 
-#' Print method for gbkmr_results objects
-#'
-#' @param x A gbkmr_results object from \code{\link{gbkmr_run}}
-#' @param ... Additional arguments (not used)
-#'
-#' @return Invisible x
 #' @export
 print.gbkmr_results <- function(x, ...) {
   cat("g-BKMR Analysis Results\n")
   cat("======================\n\n")
-
-  cat("Causal Effect Estimate:\n")
-  cat("  Estimate:", round(x$causal_effect$estimate, 4), "\n")
-  cat("  95% CI: (", round(x$causal_effect$lower, 4), ",",
+  cat("Engine:", x$call_info$engine, "\n")
+  cat("Causal Effect (ATE):", round(x$causal_effect$estimate, 4), "\n")
+  cat("95% CI: (", round(x$causal_effect$lower, 4), ",",
       round(x$causal_effect$upper, 4), ")\n\n")
-
   cat("Counterfactual Means:\n")
-  cat("  Low exposure (25th percentile):", round(x$counterfactual_means$low, 4), "\n")
-  cat("  High exposure (75th percentile):", round(x$counterfactual_means$high, 4), "\n\n")
-
-  cat("Data Structure:\n")
-  cat("  Exposures per time point:", x$detection_info$p, "\n")
-  cat("  Time-dependent covariates per time point:", x$detection_info$Ldim, "\n")
-  if (length(x$detection_info$td_covariate_names) > 0) {
-    cat("  TD covariate names:", paste(x$detection_info$td_covariate_names, collapse = ", "), "\n")
-  }
-  cat("  Time points:", x$call_info$time_points, "\n")
-  cat("  Sample size:", x$call_info$sample_size, "\n")
-
+  cat("  E[Y^a]  (low):", round(x$counterfactual_means$low, 4), "\n")
+  cat("  E[Y^a*] (high):", round(x$counterfactual_means$high, 4), "\n")
   invisible(x)
 }
 
-#' Summary method for gbkmr_results objects
-#'
-#' @param object A gbkmr_results object from \code{\link{gbkmr_run}}
-#' @param ... Additional arguments (not used)
-#'
-#' @return Invisible object
 #' @export
 summary.gbkmr_results <- function(object, ...) {
-  cat("g-BKMR Analysis Summary\n")
-  cat("=======================\n\n")
-
-  # Main results
   print(object)
-
-  # Additional details
-  cat("\nAnalysis Details:\n")
-  cat("  Outcome type:", object$call_info$outcome_type, "\n")
+  cat("\nSettings:\n")
+  cat("  Time points:", object$call_info$time_points, "\n")
+  cat("  Sample size:", object$call_info$sample_size, "\n")
   cat("  MCMC iterations:", object$call_info$mcmc_iterations, "\n")
-  cat("  Detection pattern:", object$detection_info$detected_pattern, "\n")
+  cat("  Intervention quantiles:", object$call_info$a_probs[1],
+      "vs", object$call_info$a_probs[2], "\n")
 
-  if (length(object$variable_importance) > 0) {
-    cat("\nVariable Importance (Top 5):\n")
-    top_vars <- head(sort(abs(object$variable_importance), decreasing = TRUE), 5)
-    for (i in 1:length(top_vars)) {
-      cat("  ", names(top_vars)[i], ":", round(top_vars[i], 4), "\n")
-    }
-  }
-
-  # Interpretation
-  cat("\nInterpretation:\n")
-  effect_size <- abs(object$causal_effect$estimate)
-  if (effect_size < 0.1) {
-    cat("  Effect size: Small\n")
-  } else if (effect_size < 0.5) {
-    cat("  Effect size: Medium\n")
-  } else {
-    cat("  Effect size: Large\n")
-  }
-
-  ci_width <- object$causal_effect$upper - object$causal_effect$lower
-  cat("  95% CI width:", round(ci_width, 4), "\n")
-
-  # Statistical significance (rough approximation)
   if (sign(object$causal_effect$lower) == sign(object$causal_effect$upper)) {
-    cat("  95% CI excludes zero: Yes (statistically significant)\n")
+    cat("\n  95% CI excludes zero: Yes\n")
   } else {
-    cat("  95% CI excludes zero: No (not statistically significant)\n")
+    cat("\n  95% CI excludes zero: No\n")
   }
-
   invisible(object)
 }
