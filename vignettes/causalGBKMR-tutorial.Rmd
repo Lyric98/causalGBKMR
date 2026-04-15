@@ -286,9 +286,11 @@ results <- gbkmr_run(
   n = min(500, nrow(prepared_data)),   # subsample for BKMR fitting
   K = 1000,                            # Monte Carlo samples for g-computation
   n_knots = 50,                        # kernel approximation knots
-  engine = "bkmr",                     # standard BKMR
   verbose = TRUE
 )
+# engine defaults to "auto": uses standard BKMR for n <= 2000,
+# fast BKMR for n > 2000 (if fbkmr is installed).
+# You can override with engine = "bkmr" or engine = "fastbkmr".
 
 print(results)
 summary(results)
@@ -306,7 +308,6 @@ results <- gbkmr_run(
   n = 50,
   K = 10,
   n_knots = 15,
-  engine = "bkmr",
   verbose = TRUE
 )
 ```
@@ -421,11 +422,20 @@ BKMR on each in parallel, and combining results.
 
 ### When to use fastBKMR
 
-| Sample size | Recommendation |
-|-------------|---------------|
-| $n < 1000$ | Standard BKMR (`engine = "bkmr"`) |
-| $1000 < n < 3000$ | Either works; try BKMR with `n_knots` first |
-| $n > 3000$ | Use fastBKMR (`engine = "fastbkmr"`) |
+The package selects the engine **automatically** (`engine = "auto"`, the default):
+
+| Sample size | Auto behavior |
+|-------------|--------------|
+| $n \le 2000$ | Standard BKMR with knot approximation |
+| $n > 2000$ (fbkmr installed) | fastBKMR, with `n_subset = max(5, floor(n/1000))` |
+| $n > 2000$ (fbkmr not installed) | Standard BKMR + message suggesting fbkmr |
+
+**Why 2000?** The fastBKMR authors recommend ~1000 observations per subset
+(Sonabend et al., 2024). With at least 2 subsets needed, the minimum useful
+sample size is 2000. Below that, standard BKMR with knot approximation
+remains tractable (~80 min/model at n=2000 in our benchmarks).
+
+You can always override the auto-selection:
 
 ### Install fastBKMR
 
@@ -449,9 +459,9 @@ results_fast <- gbkmr_run(
   outcome = "Y",
   outcome_type = "continuous",
   time_points = 3,
-  engine = "fastbkmr",           # <-- the only change needed
-  n_subset = 10,                 # split data into 10 subsets (~600 obs each)
-  n_cores = 10,                  # parallel cores (ideally one per subset)
+  engine = "fastbkmr",           # or omit -- auto-selected when n > 2000
+  # n_subset and n_cores are auto-calculated when NULL:
+  # n_subset = max(5, floor(n/1000)), n_cores = min(n_subset, cores, 10)
   iter = 15000,
   n = nrow(large_prepared_data), # use all data (fastBKMR handles the scaling)
   K = 1000,
@@ -465,7 +475,7 @@ print(results_fast)
 
 | Parameter | Default | Description |
 |-----------|---------|-------------|
-| `engine` | `"bkmr"` | Set to `"fastbkmr"` to enable |
+| `engine` | `"auto"` | `"auto"` selects based on n; or force `"bkmr"` / `"fastbkmr"` |
 | `n_subset` | `10` | Number of data subsets. More subsets = faster per-subset fitting, but slightly more variance |
 | `n_cores` | `10` | Parallel cores. Set to `n_subset` for maximum parallelism |
 
@@ -520,33 +530,32 @@ results_fast <- run_gbkmr_panel(
 | **Faster prototyping** | Reduce `iter` (5000), `K` (200), `n` (200) |
 | **More stable estimates** | Increase `K` (2000) and `length(sel)` |
 | **Memory issues** | Reduce `n_knots` (30) or `n` |
-| **Large dataset** | Switch to `engine = "fastbkmr"` |
+| **Large dataset** | Automatic when n > 2000, or `engine = "fastbkmr"` |
 | **Binary outcome** | Set `outcome_type = "binary"` |
 
 ### Recommended production settings
 
 ```{r production, eval=FALSE}
-# Standard BKMR (n < 2000)
+# For any sample size -- engine is auto-selected:
 results <- gbkmr_run(
   data = prepared_data,
   time_points = T_points,
   iter = 20000,
   n = min(800, nrow(prepared_data)),
   K = 1000,
-  n_knots = 50,
-  engine = "bkmr"
+  n_knots = 50
 )
+# If n <= 2000: uses standard BKMR
+# If n >  2000: uses fastBKMR (auto n_subset, n_cores)
 
-# fastBKMR (n > 2000)
+# Or force a specific engine:
 results <- gbkmr_run(
   data = prepared_data,
   time_points = T_points,
   iter = 15000,
-  n = nrow(prepared_data),   # use full data
+  n = nrow(prepared_data),
   K = 1000,
-  engine = "fastbkmr",
-  n_subset = 10,
-  n_cores = 10
+  engine = "fastbkmr"     # override auto-selection
 )
 ```
 

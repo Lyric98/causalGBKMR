@@ -15,9 +15,9 @@ gbkmr_run(
   K = 1000,
   iter = 15000,
   n_knots = 50,
-  engine = c("bkmr", "fastbkmr"),
-  n_subset = 10,
-  n_cores = 10,
+  engine = c("auto", "bkmr", "fastbkmr"),
+  n_subset = NULL,
+  n_cores = NULL,
   a_probs = c(0.25, 0.75),
   a_vals = NULL,
   astar_vals = NULL,
@@ -45,11 +45,15 @@ gbkmr_run(
 
 \item{n_knots}{Integer. Knots for kernel approximation.}
 
-\item{engine}{Character. "bkmr" or "fastbkmr".}
+\item{engine}{Character. "auto" (default), "bkmr", or "fastbkmr". When
+"auto", the engine is selected based on sample size: standard BKMR for
+n <= 2000, fast BKMR for n > 2000 (if fbkmr is installed).}
 
-\item{n_subset}{Integer. Number of subsets for fastBKMR.}
+\item{n_subset}{Integer or NULL. Number of subsets for fastBKMR. If NULL
+(default), auto-calculated as max(5, floor(n / 1000)).}
 
-\item{n_cores}{Integer. Number of cores for fastBKMR.}
+\item{n_cores}{Integer or NULL. Number of parallel cores for fastBKMR.
+If NULL (default), auto-calculated as min(n_subset, available cores, 10).}
 
 \item{a_probs}{Numeric vector of length 2. Quantile probabilities for
 intervention levels (default: c(0.25, 0.75)).}

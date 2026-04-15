@@ -14,9 +14,13 @@
 #' @param K Integer. Monte Carlo samples.
 #' @param iter Integer. Total MCMC iterations.
 #' @param n_knots Integer. Knots for kernel approximation.
-#' @param engine Character. "bkmr" or "fastbkmr".
-#' @param n_subset Integer. Number of subsets for fastBKMR.
-#' @param n_cores Integer. Number of cores for fastBKMR.
+#' @param engine Character. "auto" (default), "bkmr", or "fastbkmr". When
+#'   "auto", the engine is selected based on sample size: standard BKMR for
+#'   n <= 2000, fast BKMR for n > 2000 (if fbkmr is installed).
+#' @param n_subset Integer or NULL. Number of subsets for fastBKMR. If NULL
+#'   (default), auto-calculated as max(5, floor(n / 1000)).
+#' @param n_cores Integer or NULL. Number of parallel cores for fastBKMR.
+#'   If NULL (default), auto-calculated as min(n_subset, available cores, 10).
 #' @param a_probs Numeric vector of length 2. Quantile probabilities for
 #'   intervention levels (default: c(0.25, 0.75)).
 #' @param a_vals Named numeric vector or NULL. Custom low-exposure values.
@@ -36,9 +40,9 @@ gbkmr_run <- function(
     K = 1000,
     iter = 15000,
     n_knots = 50,
-    engine = c("bkmr", "fastbkmr"),
-    n_subset = 10,
-    n_cores = 10,
+    engine = c("auto", "bkmr", "fastbkmr"),
+    n_subset = NULL,
+    n_cores = NULL,
     a_probs = c(0.25, 0.75),
     a_vals = NULL,
     astar_vals = NULL,
@@ -53,6 +57,33 @@ gbkmr_run <- function(
 
   if (is.null(sel)) sel <- seq(floor(iter * 0.6), iter, by = 25)
   if (is.null(n)) n <- min(500, nrow(data))
+
+  # --- Auto engine selection ---
+  # Threshold: n > 2000 triggers fastBKMR (Sonabend et al. 2024 recommend
+  # ~1000 per subset; 2 subsets x 1000 = 2000 minimum for fastBKMR to be
+  # meaningful; standard BKMR with knots is still tractable below this).
+  if (engine == "auto") {
+    if (n > 2000 && requireNamespace("fbkmr", quietly = TRUE)) {
+      engine <- "fastbkmr"
+      if (verbose) message("Auto-selected engine: fastbkmr (n = ", n, " > 2000)")
+    } else {
+      if (n > 2000 && verbose) {
+        message("Note: n = ", n, " > 2000. Consider installing 'fbkmr' for faster fitting:\n",
+                "  remotes::install_github('junwei-lu/fbkmr')")
+      }
+      engine <- "bkmr"
+      if (verbose && n <= 2000) message("Auto-selected engine: bkmr (n = ", n, " <= 2000)")
+    }
+  }
+
+  # Default n_subset / n_cores when using fastBKMR
+  if (engine == "fastbkmr") {
+    if (is.null(n_subset)) n_subset <- max(5L, as.integer(n / 1000))
+    if (is.null(n_cores))  n_cores  <- min(n_subset, parallel::detectCores() - 1L, 10L)
+  } else {
+    if (is.null(n_subset)) n_subset <- 10L
+    if (is.null(n_cores))  n_cores  <- 10L
+  }
 
   if (verbose) {
     cat("Starting g-BKMR analysis...\n")
