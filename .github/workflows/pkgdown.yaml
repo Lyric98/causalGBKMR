@@ -9,7 +9,6 @@ name: pkgdown
 
 permissions:
   contents: write
-  pages: write
 
 jobs:
   pkgdown:
@@ -38,6 +37,7 @@ jobs:
         if: github.event_name != 'pull_request'
         uses: JamesIves/github-pages-deploy-action@v4
         with:
-          clean: false
           branch: gh-pages
           folder: docs
+          clean: true
+          token: ${{ secrets.GITHUB_TOKEN }}
