@@ -14,6 +14,7 @@ reference:
     desc: "Automatically detect variable structure"
     contents:
       - detect_variable_patterns
+      - print.gbkmr_detection
 
   - title: "Analysis"
     desc: "Run g-BKMR analysis"
