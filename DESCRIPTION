@@ -30,7 +30,5 @@ Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 VignetteBuilder: knitr
-Remotes:
-    junwei-lu/fbkmr
 URL: https://github.com/Lyric98/causalGBKMR
 BugReports: https://github.com/Lyric98/causalGBKMR/issues

@@ -39,15 +39,9 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::rcmdcheck
+          extra-packages: any::rcmdcheck, any::knitr, any::rmarkdown, any::testthat, any::mvtnorm
+          dependencies: '"hard"'
           needs: check
-          dependencies: NA
-          install-quarto: false
-
-      - name: Install remaining dependencies
-        run: |
-          pak::pkg_install(c("bkmr", "dplyr", "fields", "knitr", "rmarkdown", "testthat"), ask = FALSE)
-        shell: Rscript {0}
 
       - uses: r-lib/actions/check-r-package@v2
         with:
