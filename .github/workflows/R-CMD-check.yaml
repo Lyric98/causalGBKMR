@@ -41,6 +41,13 @@ jobs:
         with:
           extra-packages: any::rcmdcheck
           needs: check
+          dependencies: 'NA'
+          install-quarto: false
+
+      - name: Install remaining dependencies
+        run: |
+          pak::pkg_install(c("bkmr", "dplyr", "fields", "knitr", "rmarkdown", "testthat"), ask = FALSE)
+        shell: Rscript {0}
 
       - uses: r-lib/actions/check-r-package@v2
         with:

@@ -21,6 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     env:
       GITHUB_PAT: ${{ secrets.GITHUB_TOKEN }}
+      _R_CHECK_FORCE_SUGGESTS_: false
     steps:
       - uses: actions/checkout@v4
 
@@ -32,8 +33,19 @@ jobs:
 
       - uses: r-lib/actions/setup-r-dependencies@v2
         with:
-          extra-packages: any::pkgdown, local::.
+          extra-packages: any::pkgdown
           needs: website
+          dependencies: 'NA'
+
+      - name: Install dependencies (skip fbkmr)
+        run: |
+          pak::pkg_install(c("bkmr", "dplyr", "fields", "knitr", "rmarkdown", "pkgdown"), ask = FALSE)
+        shell: Rscript {0}
+
+      - name: Install package
+        run: |
+          pak::pkg_install("local::.", ask = FALSE, dependencies = FALSE)
+        shell: Rscript {0}
 
       - name: Build site
         run: pkgdown::build_site_github_pages(new_process = FALSE, install = FALSE)
