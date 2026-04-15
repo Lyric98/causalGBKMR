@@ -1,5 +1,6 @@
 #' @file 05-user-interface.R
 #' @title User-friendly interface for g-BKMR
+#' @importFrom stats quantile
 
 #' Run g-BKMR analysis
 #'

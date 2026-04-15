@@ -9,9 +9,9 @@ validate_user_matrices(Y, Z, X, T, Adim, Ldim, n_baseline)
 \arguments{
 \item{Y}{Numeric vector. Outcome variable (length n).}
 
-\item{Z}{Numeric matrix. Mixture exposure matrix (n × (Adim × T)).}
+\item{Z}{Numeric matrix. Mixture exposure matrix (n x (Adim x T)).}
 
-\item{X}{Numeric matrix. Covariate matrix (n × (Ldim × T + baseline_covs)).}
+\item{X}{Numeric matrix. Covariate matrix (n x (Ldim x T + baseline_covs)).}
 
 \item{T}{Integer. Number of time points.}
 
@@ -45,8 +45,8 @@ The function validates:
 \dontrun{
 n <- 100
 Y <- rnorm(n)
-Z <- matrix(rnorm(n * 6), nrow = n, ncol = 6)  # 2 metals × 3 time points
-X <- matrix(rnorm(n * 5), nrow = n, ncol = 5)  # 1 TD cov × 3 time points + 2 baseline
+Z <- matrix(rnorm(n * 6), nrow = n, ncol = 6)  # 2 metals x 3 time points
+X <- matrix(rnorm(n * 5), nrow = n, ncol = 5)  # 1 TD cov x 3 time points + 2 baseline
 
 validate_user_matrices(Y, Z, X, T = 3, Adim = 2, Ldim = 1, n_baseline = 2)
 }

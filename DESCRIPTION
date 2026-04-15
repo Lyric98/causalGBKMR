@@ -2,9 +2,9 @@ Package: causalGBKMR
 Title: Causal Inference for Time-Varying Environmental Mixtures via g-BKMR
 Version: 0.1.0
 Authors@R: c(
-    person("[First]", "[Last]", role = c("aut", "cre"), email = "[email]"),
-    person("[First]", "[Last]", role = "aut"),
-    person("[First]", "[Last]", role = "aut")
+    person("Yanran", "Li", role = c("aut", "cre"), email = "yl5465@cumc.columbia.edu"),
+    person("Author2", "TBD", role = "aut"),
+    person("Author3", "TBD", role = "aut")
     )
 Description: Combines the g-formula with Bayesian Kernel Machine Regression
     (BKMR) for causal inference with time-varying correlated environmental
@@ -16,7 +16,7 @@ Encoding: UTF-8
 Depends:
     R (>= 3.5.0)
 Roxygen: list(markdown = TRUE)
-RoxygenNote: 7.3.2
+RoxygenNote: 7.3.3
 Imports:
     bkmr,
     dplyr,
@@ -26,7 +26,9 @@ Suggests:
     parallel,
     mvtnorm,
     knitr,
-    rmarkdown
+    rmarkdown,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
 VignetteBuilder: knitr
 URL: https://github.com/Lyric98/causalGBKMR
 BugReports: https://github.com/Lyric98/causalGBKMR/issues

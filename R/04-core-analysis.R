@@ -1,5 +1,6 @@
 #' @file 04-core-analysis.R
 #' @title Core g-BKMR analysis implementation
+#' @importFrom stats complete.cases quantile rnorm
 
 #' Run g-BKMR panel analysis
 #'

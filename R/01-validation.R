@@ -9,8 +9,8 @@
 #' to ensure they meet the requirements for g-BKMR analysis.
 #'
 #' @param Y Numeric vector. Outcome variable (length n).
-#' @param Z Numeric matrix. Mixture exposure matrix (n × (Adim × T)).
-#' @param X Numeric matrix. Covariate matrix (n × (Ldim × T + baseline_covs)).
+#' @param Z Numeric matrix. Mixture exposure matrix (n x (Adim x T)).
+#' @param X Numeric matrix. Covariate matrix (n x (Ldim x T + baseline_covs)).
 #' @param T Integer. Number of time points.
 #' @param Adim Integer. Number of mixture components per time point.
 #' @param Ldim Integer. Number of time-dependent covariates per time point.
@@ -31,8 +31,8 @@
 #' \dontrun{
 #' n <- 100
 #' Y <- rnorm(n)
-#' Z <- matrix(rnorm(n * 6), nrow = n, ncol = 6)  # 2 metals × 3 time points
-#' X <- matrix(rnorm(n * 5), nrow = n, ncol = 5)  # 1 TD cov × 3 time points + 2 baseline
+#' Z <- matrix(rnorm(n * 6), nrow = n, ncol = 6)  # 2 metals x 3 time points
+#' X <- matrix(rnorm(n * 5), nrow = n, ncol = 5)  # 1 TD cov x 3 time points + 2 baseline
 #'
 #' validate_user_matrices(Y, Z, X, T = 3, Adim = 2, Ldim = 1, n_baseline = 2)
 #' }
@@ -64,19 +64,19 @@ validate_user_matrices <- function(Y, Z, X, T, Adim, Ldim, n_baseline) {
 
   if (ncol(Z) != expected_Z_cols) {
     stop("Z matrix dimension error!\n",
-         "Expected: ", expected_Z_cols, " columns (", Adim, " mixtures × ", T, " time points)\n",
+         "Expected: ", expected_Z_cols, " columns (", Adim, " mixtures x ", T, " time points)\n",
          "Actual: ", ncol(Z), " columns")
   }
 
   if (ncol(X) != expected_X_cols) {
     stop("X matrix dimension error!\n",
-         "Expected: ", expected_X_cols, " columns (", Ldim, " TD covariates × ", T, " time points + ", n_baseline, " baseline covariates)\n",
+         "Expected: ", expected_X_cols, " columns (", Ldim, " TD covariates x ", T, " time points + ", n_baseline, " baseline covariates)\n",
          "Actual: ", ncol(X), " columns")
   }
 
   if (any(is.na(Z))) warning("Z contains missing values")
   if (any(is.na(X))) warning("X contains missing values")
 
-  cat("✓ Input validation passed\n")
+  cat("[OK] Input validation passed\n")
   invisible(TRUE)
 }

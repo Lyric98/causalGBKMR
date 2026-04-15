@@ -2,108 +2,75 @@
 % Please edit documentation in R/04-core-analysis.R
 \name{run_gbkmr_panel}
 \alias{run_gbkmr_panel}
-\title{Core g-BKMR analysis functions}
+\title{Core g-BKMR analysis implementation}
 \usage{
 run_gbkmr_panel(
   sim_popn,
   T = 5,
+  p = 3,
+  mediator_basenames = c("waist"),
+  common_covariates = c("sex", "waist0"),
   currind = 1,
-  sel = seq(22000, 24000, by = 25),
   n = 500,
   K = 1000,
+  sel = seq(22000, 24000, by = 25),
   iter = 24000,
-  parallel = TRUE,
-  save_exposure_preds = TRUE,
-  return_ci = TRUE,
-  make_plots = TRUE,
-  use_knots = TRUE,
-  n_knots = 50
+  n_iter = NULL,
+  n_knots = 50,
+  engine = c("bkmr", "fastbkmr"),
+  n_subset = 10,
+  n_cores = 10,
+  a_probs = c(0.25, 0.75),
+  a_vals = NULL,
+  astar_vals = NULL,
+  verbose_every = 50
 )
 }
 \arguments{
-\item{sim_popn}{Data frame. Prepared data in g-BKMR format.}
+\item{sim_popn}{Data frame in g-BKMR format (see \code{\link{prepare_gbkmr_data}}).}
 
-\item{T}{Integer. Number of time points (default: 5).}
+\item{T}{Integer. Number of time points (including t=0).}
 
-\item{currind}{Integer. Current iteration index for reproducibility (default: 1).}
+\item{p}{Integer. Number of exposures per time point.}
 
-\item{sel}{Numeric vector. MCMC iterations to use for inference (default: seq(22000, 24000, by = 25)).}
+\item{mediator_basenames}{Character vector. Base names for time-dependent confounders.}
 
-\item{n}{Integer. Sample size to use for analysis (default: 500).}
+\item{common_covariates}{Character vector. Baseline covariate names.}
 
-\item{K}{Integer. Number of samples for Monte Carlo integration (default: 1000).}
+\item{currind}{Integer. Random seed.}
 
-\item{iter}{Integer. Total MCMC iterations (default: 24000).}
+\item{n}{Integer. Sample size for analysis.}
 
-\item{parallel}{Logical. Whether to use parallel processing (default: TRUE).}
+\item{K}{Integer. Monte Carlo samples for g-computation.}
 
-\item{save_exposure_preds}{Logical. Whether to save exposure predictions (default: TRUE).}
+\item{sel}{Numeric vector. Post-burn-in MCMC indices for inference.}
 
-\item{return_ci}{Logical. Whether to return confidence intervals (default: TRUE).}
+\item{iter}{Integer. MCMC iterations for mediator models.}
 
-\item{make_plots}{Logical. Whether to generate diagnostic plots (default: TRUE).}
+\item{n_iter}{Integer or NULL. MCMC iterations for outcome model (default: iter).}
 
-\item{use_knots}{Logical. Whether to use knots for kernel approximation (default: TRUE).}
+\item{n_knots}{Integer. Number of knots for BKMR kernel approximation.}
 
-\item{n_knots}{Integer. Number of knots to use (default: 50).}
+\item{engine}{Character. Fitting engine: "bkmr" or "fastbkmr".}
+
+\item{n_subset}{Integer. Number of subsets for fastBKMR.}
+
+\item{n_cores}{Integer. Number of cores for fastBKMR parallel.}
+
+\item{a_probs}{Numeric vector of length 2. Quantile probabilities for
+intervention levels (default: c(0.25, 0.75)).}
+
+\item{a_vals}{Named numeric vector or NULL. Custom intervention values for
+low-exposure scenario. Overrides a_probs if provided.}
+
+\item{astar_vals}{Named numeric vector or NULL. Custom intervention values for
+high-exposure scenario. Overrides a_probs if provided.}
+
+\item{verbose_every}{Integer. Print progress every N iterations.}
 }
 \value{
-A list containing:
-\describe{
-\item{diff_gBKMR}{Numeric. The main causal effect estimate}
-\item{Ya}{Numeric vector. Potential outcomes under low exposure}
-\item{Yastar}{Numeric vector. Potential outcomes under high exposure}
-\item{beta_all}{Numeric vector. All regression coefficients}
-\item{L_values_a}{List. Mediator values under low exposure}
-\item{L_values_astar}{List. Mediator values under high exposure}
-\item{detection_info}{List. Variable detection information}
-\item{fitted_models}{List. Fitted BKMR models (if save_exposure_preds = TRUE)}
-}
+A list with causal effect estimate and model fits.
 }
 \description{
-Main computational engines for g-BKMR analysis. Contains the core
-algorithm that performs Bayesian kernel machine regression with time-varying confounding.
-Run g-BKMR panel analysis
-
-Performs the core g-BKMR analysis on a prepared dataset. This function
-implements the g-formula with Bayesian kernel machine regression to estimate
-causal effects of time-varying exposure mixtures while accounting for time-varying
-confounding.
+Core g-BKMR analysis implementation
 }
-\details{
-The analysis proceeds in several steps:
-\enumerate{
-\item Auto-detect variable patterns using \code{\link{detect_variable_patterns}}
-\item Fit mediator models for each time point using BKMR
-\item Fit outcome model using BKMR
-\item Compute counterfactual predictions using the g-formula
-\item Calculate causal effect estimates
-}
-
-The function compares outcomes when all exposures are set to their 25th percentile
-versus when all exposures are set to their 75th percentile.
-}
-\examples{
-\dontrun{
-# Assume you have prepared data
-library(bkmr)
-
-# Run analysis with default settings
-results <- run_gbkmr_panel(prepared_data, T = 3)
-
-# Extract main results
-causal_effect <- results$diff_gBKMR
-detection_info <- results$detection_info
-
-# Run with custom settings
-results <- run_gbkmr_panel(
-  sim_popn = prepared_data,
-  T = 3,
-  n = 300,
-  iter = 15000,
-  make_plots = FALSE
-)
-}
-
-}
-\keyword{internal}

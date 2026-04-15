@@ -14,7 +14,8 @@ knitr::opts_chunk$set(
   collapse = TRUE,
   comment = "#>",
   fig.width = 6,
-  fig.height = 4
+  fig.height = 4,
+  eval = requireNamespace("causalGBKMR", quietly = TRUE)
 )
 ```
 
@@ -63,18 +64,8 @@ remotes::install_github("junwei-lu/fbkmr")
 
 ### Verify installation
 
-```{r verify-install, eval=FALSE}
+```{r load-packages, message=FALSE, warning=FALSE}
 library(causalGBKMR)
-?gbkmr_run
-```
-
-```{r load-packages, message=FALSE, warning=FALSE, echo=FALSE}
-# Internal: load for vignette building
-library(bkmr)
-library(dplyr)
-library(fields)
-r_files <- sort(list.files("../R", pattern = "^\\d.*\\.R$", full.names = TRUE))
-for (f in r_files) source(f)
 ```
 
 ---

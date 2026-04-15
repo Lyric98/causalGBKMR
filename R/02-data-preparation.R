@@ -1,5 +1,6 @@
 #' @file 02-data-preparation.R
 #' @title Data preparation and formatting for g-BKMR
+#' @importFrom stats rbinom rnorm sd
 #' @description Functions to convert user data into the wide-format data structure
 #' required for g-BKMR analysis. Handles variable naming, transformations, and metadata.
 
@@ -10,8 +11,8 @@
 #' binary time-dependent covariates with enhanced input validation.
 #'
 #' @param Y Numeric vector. Outcome variable (length n).
-#' @param Z Numeric matrix. Mixture exposure matrix (n × (Adim × T)).
-#' @param X Numeric matrix. Covariate matrix (n × (Ldim × T + baseline_covs)).
+#' @param Z Numeric matrix. Mixture exposure matrix (n x (Adim x T)).
+#' @param X Numeric matrix. Covariate matrix (n x (Ldim x T + baseline_covs)).
 #' @param time_points Integer. Number of time points (T).
 #' @param mixture_components Integer. Number of mixture components per time point (Adim).
 #' @param td_covariates Integer. Number of time-dependent covariates per time point (Ldim).
@@ -25,8 +26,8 @@
 #' @details
 #' The function expects matrices organized as follows:
 #' \itemize{
-#'   \item Z matrix: Mixtures in chronological order [Mix1_T0, Mix2_T0, ..., MixAdim_T0, Mix1_T1, ...]
-#'   \item X matrix: [TD_Cov1_T1, TD_Cov2_T1, ..., TD_CovLdim_T1, ..., TD_CovLdim_T(T-1), Baseline1, Baseline2, ...]
+#'   \item Z matrix: Mixtures in chronological order (Mix1_T0, Mix2_T0, ..., MixAdim_T0, Mix1_T1, ...)
+#'   \item X matrix: (TD_Cov1_T1, TD_Cov2_T1, ..., TD_CovLdim_T1, ..., TD_CovLdim_T(T-1), Baseline1, Baseline2, ...)
 #' }
 #'
 #' The output data frame has the following structure:
@@ -46,8 +47,8 @@
 #' # Generate test data
 #' n <- 200
 #' Y <- rnorm(n)
-#' Z <- matrix(rlnorm(n * 6), nrow = n, ncol = 6)  # 2 metals × 3 time points
-#' X <- matrix(rnorm(n * 8), nrow = n, ncol = 8)   # 2 TD covs × 3 time points + 2 baseline
+#' Z <- matrix(rlnorm(n * 6), nrow = n, ncol = 6)  # 2 metals x 3 time points
+#' X <- matrix(rnorm(n * 8), nrow = n, ncol = 8)   # 2 TD covs x 3 time points + 2 baseline
 #'
 #' # Prepare data
 #' prepared_data <- prepare_gbkmr_data(
@@ -67,8 +68,8 @@
 #' @export
 prepare_gbkmr_data <- function(
     Y,                     # Outcome vector (length n)
-    Z,                     # Mixture exposure matrix (n × (Adim * T))
-    X,                     # Covariate matrix (n × (Ldim * T + baseline_covs))
+    Z,                     # Mixture exposure matrix (n x (Adim * T))
+    X,                     # Covariate matrix (n x (Ldim * T + baseline_covs))
     time_points,           # Number of time points (T)
     mixture_components,    # Number of mixture components per time point (Adim)
     td_covariates,         # Number of time-dependent covariates per time point (Ldim)
@@ -278,14 +279,14 @@ prepare_gbkmr_data <- function(
   )
 
   # Print summary
-  cat("✓ Data conversion successful!\n")
-  cat("✓ Generated", nrow(df), "×", ncol(df), "data frame\n")
+  cat("[OK] Data conversion successful!\n")
+  cat("[OK] Generated", nrow(df), "x", ncol(df), "data frame\n")
   if (use_user_names) {
-    cat("✓ Using user covariate names:", paste(td_covariate_names, collapse = ", "), "\n")
+    cat("[OK] Using user covariate names:", paste(td_covariate_names, collapse = ", "), "\n")
   } else {
-    cat("✓ Using generic covariate names:", paste(td_covariate_names, collapse = ", "), "\n")
+    cat("[OK] Using generic covariate names:", paste(td_covariate_names, collapse = ", "), "\n")
   }
-  cat("✓ Ready for g-BKMR analysis\n\n")
+  cat("[OK] Ready for g-BKMR analysis\n\n")
 
   return(df)
 }

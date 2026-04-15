@@ -2,7 +2,7 @@
 % Please edit documentation in R/05-user-interface.R
 \name{gbkmr_run}
 \alias{gbkmr_run}
-\title{User-friendly interface functions for g-BKMR}
+\title{User-friendly interface for g-BKMR}
 \usage{
 gbkmr_run(
   data,
@@ -14,105 +14,55 @@ gbkmr_run(
   n = NULL,
   K = 1000,
   iter = 15000,
-  parallel = TRUE,
-  use_knots = TRUE,
   n_knots = 50,
-  make_plots = FALSE,
+  engine = c("bkmr", "fastbkmr"),
+  n_subset = 10,
+  n_cores = 10,
+  a_probs = c(0.25, 0.75),
+  a_vals = NULL,
+  astar_vals = NULL,
   verbose = TRUE
 )
 }
 \arguments{
-\item{data}{Data frame. Input data in g-BKMR format. Can be prepared using
-\code{\link{prepare_gbkmr_data}}.}
+\item{data}{Data frame in g-BKMR format (see \code{\link{prepare_gbkmr_data}}).}
 
-\item{outcome}{Character. Name of the outcome variable (default: "Y").}
+\item{outcome}{Character. Outcome variable name (default: "Y").}
 
-\item{outcome_type}{Character. Type of outcome: "continuous" or "binary" (default: "continuous").}
+\item{outcome_type}{Character. "continuous" or "binary".}
 
-\item{time_points}{Integer. Number of time points in the study.}
+\item{time_points}{Integer. Number of time points.}
 
-\item{currind}{Integer. Random seed for reproducibility (default: 1).}
+\item{currind}{Integer. Random seed.}
 
-\item{sel}{Numeric vector. MCMC iterations to use for inference (default: auto-calculated).}
+\item{sel}{Numeric vector. Post-burn-in MCMC indices (auto-calculated if NULL).}
 
-\item{n}{Integer. Sample size for analysis (default: min(500, nrow(data))).}
+\item{n}{Integer. Sample size (default: min(500, nrow(data))).}
 
-\item{K}{Integer. Number of Monte Carlo samples (default: 1000).}
+\item{K}{Integer. Monte Carlo samples.}
 
-\item{iter}{Integer. Total MCMC iterations (default: 15000).}
+\item{iter}{Integer. Total MCMC iterations.}
 
-\item{parallel}{Logical. Whether to use parallel processing (default: TRUE).}
+\item{n_knots}{Integer. Knots for kernel approximation.}
 
-\item{use_knots}{Logical. Whether to use kernel approximation (default: TRUE).}
+\item{engine}{Character. "bkmr" or "fastbkmr".}
 
-\item{n_knots}{Integer. Number of knots for approximation (default: 50).}
+\item{n_subset}{Integer. Number of subsets for fastBKMR.}
 
-\item{make_plots}{Logical. Whether to generate diagnostic plots (default: FALSE).}
+\item{n_cores}{Integer. Number of cores for fastBKMR.}
 
-\item{verbose}{Logical. Whether to print detailed progress (default: TRUE).}
+\item{a_probs}{Numeric vector of length 2. Quantile probabilities for
+intervention levels (default: c(0.25, 0.75)).}
+
+\item{a_vals}{Named numeric vector or NULL. Custom low-exposure values.}
+
+\item{astar_vals}{Named numeric vector or NULL. Custom high-exposure values.}
+
+\item{verbose}{Logical. Print progress.}
 }
 \value{
-An object of class "gbkmr_results" containing:
-\describe{
-\item{causal_effect}{List with estimate, lower CI, and upper CI}
-\item{counterfactual_means}{List with low and high exposure means}
-\item{variable_importance}{Numeric vector of regression coefficients}
-\item{detection_info}{Information about detected variable structure}
-\item{raw_results}{Complete results from the core analysis}
-\item{call_info}{Information about the function call}
-}
+Object of class "gbkmr_results".
 }
 \description{
-High-level functions that provide a clean, user-friendly API
-for g-BKMR analysis. These functions handle parameter defaults and result formatting.
-Run g-BKMR analysis with user-friendly interface
-
-Main user interface for g-BKMR analysis. This function provides
-a simplified API for conducting g-BKMR analysis with sensible defaults and
-user-friendly output formatting.
-}
-\details{
-This function is the main entry point for users. It:
-\enumerate{
-\item Validates inputs and sets sensible defaults
-\item Calls the core g-BKMR analysis function
-\item Formats results for user-friendly interpretation
-\item Provides confidence intervals and summary statistics
-}
-
-The analysis estimates the causal effect of changing all exposures from their
-25th percentile to their 75th percentile, while properly accounting for
-time-varying confounding.
-}
-\examples{
-\dontrun{
-# Prepare your data first
-prepared_data <- prepare_gbkmr_data(
-  Y = Y, Z = Z, X = X,
-  time_points = 3,
-  mixture_components = 2,
-  td_covariates = 1,
-  baseline_covariates = 1
-)
-
-# Run g-BKMR analysis
-results <- gbkmr_run(
-  data = prepared_data,
-  time_points = 3,
-  verbose = TRUE
-)
-
-# View results
-print(results)
-summary(results)
-
-# Extract specific components
-causal_effect <- results$causal_effect$estimate
-confidence_interval <- c(results$causal_effect$lower, results$causal_effect$upper)
-}
-
-}
-\seealso{
-\code{\link{prepare_gbkmr_data}} for data preparation,
-\code{\link{detect_variable_patterns}} for variable detection
+User-friendly interface for g-BKMR
 }

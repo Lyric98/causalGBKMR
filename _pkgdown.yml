@@ -1,0 +1,22 @@
+url: https://Lyric98.github.io/causalGBKMR/
+
+template:
+  bootstrap: 5
+
+reference:
+  - title: "Data Preparation"
+    desc: "Prepare and validate your data for g-BKMR analysis"
+    contents:
+      - prepare_gbkmr_data
+      - validate_user_matrices
+
+  - title: "Variable Detection"
+    desc: "Automatically detect variable structure"
+    contents:
+      - detect_variable_patterns
+
+  - title: "Analysis"
+    desc: "Run g-BKMR analysis"
+    contents:
+      - gbkmr_run
+      - run_gbkmr_panel
