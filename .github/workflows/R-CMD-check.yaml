@@ -41,7 +41,7 @@ jobs:
         with:
           extra-packages: any::rcmdcheck
           needs: check
-          dependencies: 'NA'
+          dependencies: NA
           install-quarto: false
 
       - name: Install remaining dependencies
