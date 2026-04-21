@@ -20,6 +20,70 @@ detect_variable_type <- function(x) {
   "continuous"
 }
 
+#' Quick convergence diagnostics for a fitted BKMR model
+#'
+#' @description Computes two standard MCMC diagnostics for the beta parameters
+#'   of a BKMR fit: effective sample size (ESS) and Geweke z-score. Returns
+#'   a data.frame of per-parameter diagnostics plus an overall flag.
+#' @param fit A bkmrfit object, or a list of bkmrfit objects (fastBKMR).
+#' @param sel_idx Integer vector of post-burn-in indices to use.
+#' @return A list with: `ess` (min effective sample size across betas),
+#'   `geweke_max_abs` (max absolute Geweke z-score across betas),
+#'   `warning_flags` (character vector of issues found, or NULL if OK).
+#' @keywords internal
+check_convergence <- function(fit, sel_idx) {
+  if (is.list(fit) && !inherits(fit, "bkmrfit")) {
+    # fastBKMR: check each subset, return worst-case
+    results_list <- lapply(fit, check_convergence, sel_idx = sel_idx)
+    min_ess <- min(sapply(results_list, function(r) r$ess), na.rm = TRUE)
+    max_gew <- max(sapply(results_list, function(r) r$geweke_max_abs), na.rm = TRUE)
+    all_warnings <- unique(unlist(lapply(results_list, function(r) r$warning_flags)))
+    return(list(ess = min_ess, geweke_max_abs = max_gew,
+                warning_flags = all_warnings))
+  }
+
+  beta_post <- fit$beta[sel_idx, , drop = FALSE]
+  n_samp <- nrow(beta_post)
+  flags <- character(0)
+
+  # Effective sample size via simple autocorrelation
+  ess_per_col <- apply(beta_post, 2, function(x) {
+    if (stats::sd(x) < 1e-10) return(n_samp)  # constant column
+    acf_vals <- tryCatch(
+      stats::acf(x, lag.max = min(50, n_samp - 1), plot = FALSE)$acf[-1],
+      error = function(e) 0
+    )
+    # Truncate at first negative autocorr
+    first_neg <- which(acf_vals <= 0)[1]
+    if (is.na(first_neg)) first_neg <- length(acf_vals)
+    rho_sum <- if (first_neg > 1) sum(acf_vals[1:(first_neg - 1)]) else 0
+    n_samp / (1 + 2 * rho_sum)
+  })
+  min_ess <- min(ess_per_col, na.rm = TRUE)
+
+  # Geweke: compare first 10% to last 50% of chain
+  geweke_per_col <- apply(beta_post, 2, function(x) {
+    n1 <- max(2, floor(n_samp * 0.1))
+    n2 <- max(2, floor(n_samp * 0.5))
+    if (n_samp < n1 + n2) return(0)
+    x1 <- x[1:n1]
+    x2 <- x[(n_samp - n2 + 1):n_samp]
+    s1 <- stats::var(x1); s2 <- stats::var(x2)
+    if (!is.finite(s1) || !is.finite(s2)) return(0)
+    denom <- sqrt(s1 / n1 + s2 / n2)
+    if (!is.finite(denom) || denom < 1e-10) return(0)
+    (mean(x1) - mean(x2)) / denom
+  })
+  max_abs_geweke <- suppressWarnings(max(abs(geweke_per_col), na.rm = TRUE))
+  if (!is.finite(max_abs_geweke)) max_abs_geweke <- 0
+
+  if (min_ess < 100) flags <- c(flags, "low_ess")
+  if (max_abs_geweke > 2.5) flags <- c(flags, "geweke_nonstationary")
+
+  list(ess = min_ess, geweke_max_abs = max_abs_geweke,
+       warning_flags = flags)
+}
+
 #' Print a summary of what the package detected from user input
 #'
 #' @description Shows the user exactly which variables the package identified
@@ -46,7 +110,8 @@ print_input_audit <- function(data, outcome, outcome_type, time_points,
   }
   if (outcome_type == "binary") {
     cat("  Link function:   probit (via bkmr::kmbayes family='binomial')\n")
-    cat("  NOTE: binary outcome support is experimental in this version.\n")
+    cat("  NOTE: Only engine='bkmr' supports binary outcomes.\n")
+    cat("        Output is returned on the probability scale.\n")
   } else {
     cat("  Link function:   identity (Gaussian BKMR)\n")
   }
@@ -226,6 +291,7 @@ gbkmr_run <- function(
     engine = engine,
     n_subset = n_subset,
     n_cores = n_cores,
+    outcome_type = outcome_type,
     a_probs = a_probs,
     a_vals = a_vals,
     astar_vals = astar_vals
@@ -238,6 +304,18 @@ gbkmr_run <- function(
     upper = quantile(results$Yastar - results$Ya, 0.975, na.rm = TRUE)
   )
 
+  # --- Layer 1 convergence diagnostics ---
+  # Check each fitted BKMR model for ESS and Geweke stationarity
+  diagnostics <- list()
+  for (t in seq_along(results$fit_mediators)) {
+    for (li in seq_along(results$fit_mediators[[t]])) {
+      nm <- paste0("mediator_t", t, "_", li)
+      diagnostics[[nm]] <- check_convergence(
+        results$fit_mediators[[t]][[li]], sel_idx = sel)
+    }
+  }
+  diagnostics[["outcome_Y"]] <- check_convergence(results$fit_y, sel_idx = sel)
+
   formatted_results <- list(
     causal_effect = causal_effect,
     counterfactual_means = list(
@@ -246,6 +324,7 @@ gbkmr_run <- function(
     ),
     variable_importance = results$beta_y,
     detection_info = detection,
+    diagnostics = diagnostics,
     raw_results = results,
     call_info = list(
       outcome = outcome,
@@ -265,6 +344,28 @@ gbkmr_run <- function(
     cat("  ATE:", round(causal_effect$estimate, 4),
         "  95% CI: (", round(causal_effect$lower, 4), ",",
         round(causal_effect$upper, 4), ")\n")
+
+    # Print convergence warnings if any
+    cat("\n[Convergence check]\n")
+    any_warn <- FALSE
+    for (nm in names(diagnostics)) {
+      d <- diagnostics[[nm]]
+      flags <- d$warning_flags
+      if (length(flags) == 0L) {
+        cat(sprintf("  [OK]      %-20s ESS=%.0f, Geweke |z|=%.2f\n",
+                    nm, d$ess, d$geweke_max_abs))
+      } else {
+        any_warn <- TRUE
+        cat(sprintf("  [WARNING] %-20s ESS=%.0f, Geweke |z|=%.2f  [%s]\n",
+                    nm, d$ess, d$geweke_max_abs, paste(flags, collapse = ", ")))
+      }
+    }
+    if (any_warn) {
+      cat("\n  Some models show signs of poor convergence. Consider:\n")
+      cat("    - Increasing iter (try 30000 or 50000)\n")
+      cat("    - Increasing burn-in: sel = seq(floor(iter*0.8), iter, by=25)\n")
+      cat("    - Inspecting trace plots: bkmr::TracePlot(results$raw_results$fit_y)\n")
+    }
   }
 
   formatted_results

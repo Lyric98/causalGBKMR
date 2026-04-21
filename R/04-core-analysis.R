@@ -19,6 +19,9 @@
 #' @param engine Character. Fitting engine: "bkmr" or "fastbkmr".
 #' @param n_subset Integer. Number of subsets for fastBKMR.
 #' @param n_cores Integer. Number of cores for fastBKMR parallel.
+#' @param outcome_type Character. "continuous" (Gaussian BKMR, default) or
+#'   "binary" (probit BKMR via family="binomial"). Binary outcome requires
+#'   engine="bkmr" (fastBKMR does not yet support non-Gaussian outcomes).
 #' @param a_probs Numeric vector of length 2. Quantile probabilities for
 #'   intervention levels (default: c(0.25, 0.75)).
 #' @param a_vals Named numeric vector or NULL. Custom intervention values for
@@ -45,12 +48,24 @@ run_gbkmr_panel <- function(
     engine = c("bkmr", "fastbkmr"),
     n_subset = 10,
     n_cores = 10,
+    outcome_type = c("continuous", "binary"),
     a_probs = c(0.25, 0.75),
     a_vals = NULL,
     astar_vals = NULL,
     verbose_every = 50) {
 
   engine <- match.arg(engine)
+  outcome_type <- match.arg(outcome_type)
+
+  # Binary outcome is only supported for standard BKMR; fbkmr::skmbayes()
+  # internally calls kmbayes() without a family argument, so it cannot
+  # fit probit models in the current version.
+  if (outcome_type == "binary" && engine == "fastbkmr") {
+    stop("Binary outcome is not supported with engine='fastbkmr'.\n",
+         "  fbkmr::skmbayes() does not expose the family argument.\n",
+         "  Use engine='bkmr' for binary outcomes, or subsample your data.")
+  }
+
   if (is.null(n_iter)) n_iter <- iter
   if (!"Y" %in% names(sim_popn)) stop("Data must contain outcome variable 'Y'")
   if (!"id" %in% names(sim_popn)) stop("Data must contain 'id' column")
@@ -61,7 +76,7 @@ run_gbkmr_panel <- function(
   if (max(sel) > max(iter, n_iter)) stop("sel contains indices beyond total MCMC iterations!")
 
   # --- Internal helpers ---
-  .fit_model <- function(y, Z_sc, X, it, knots = NULL) {
+  .fit_model <- function(y, Z_sc, X, it, knots = NULL, family = "gaussian") {
     if (engine == "fastbkmr") {
       if (!requireNamespace("fbkmr", quietly = TRUE))
         stop("Package 'fbkmr' is required for engine='fastbkmr'.\n",
@@ -88,6 +103,7 @@ run_gbkmr_panel <- function(
       )
     } else {
       bkmr::kmbayes(y = y, Z = Z_sc, X = X, iter = it,
+                     family = family,
                      varsel = TRUE, verbose = FALSE, knots = knots)
     }
   }
@@ -217,8 +233,10 @@ run_gbkmr_panel <- function(
 
   knots_y <- if (engine == "bkmr") .compute_knots(Zy_sc, n_knots) else NULL
 
-  message(sprintf("  [engine=%s, Z=%d cols, n=%d]", engine, ncol(Zy_sc), length(Y)))
-  fit_y <- .fit_model(Y, Zy_sc, X_common, n_iter, knots_y)
+  y_family <- if (outcome_type == "binary") "binomial" else "gaussian"
+  message(sprintf("  [engine=%s, Z=%d cols, n=%d, family=%s]",
+                  engine, ncol(Zy_sc), length(Y), y_family))
+  fit_y <- .fit_model(Y, Zy_sc, X_common, n_iter, knots_y, family = y_family)
 
   # =========================================================================
   # 3) Intervention levels (a / a*)
@@ -358,8 +376,15 @@ run_gbkmr_panel <- function(
       set.seed(j + 10000)
       Y_jk <- .sample_pred(fit_y, Znew = newz_sc,
                             Xnew = X_predict_common, sel_j = sel[j])
-      Ya_mat[j, k]     <- Y_jk[, "znew1"]
-      Yastar_mat[j, k] <- Y_jk[, "znew2"]
+      # For binary outcome (probit BKMR), SamplePred returns the linear
+      # predictor h(Z) + X*beta. Convert to probability scale via Phi().
+      if (outcome_type == "binary") {
+        Ya_mat[j, k]     <- stats::pnorm(Y_jk[, "znew1"])
+        Yastar_mat[j, k] <- stats::pnorm(Y_jk[, "znew2"])
+      } else {
+        Ya_mat[j, k]     <- Y_jk[, "znew1"]
+        Yastar_mat[j, k] <- Y_jk[, "znew2"]
+      }
     }
 
     if (j %% verbose_every == 0) {
@@ -405,6 +430,7 @@ run_gbkmr_panel <- function(
       K = K, sel = sel, iter = iter, n_iter = n_iter,
       n_knots = n_knots, n = n,
       engine = engine, n_subset = n_subset, n_cores = n_cores,
+      outcome_type = outcome_type,
       a_probs = a_probs, a_vals = a_vals, astar_vals = astar_vals,
       a_vec = a_vec, astar_vec = astar_vec,
       exposure_names = all_exposure_names,

@@ -68,6 +68,79 @@ test_that("run_gbkmr_panel rejects sel beyond iter", {
   )
 })
 
+test_that("binary outcome produces probability-scale ATE", {
+  skip_if_not_installed("bkmr")
+  set.seed(42)
+  n <- 80
+  Y <- rbinom(n, 1, 0.4)
+  Z <- matrix(abs(rnorm(n * 6)) + 0.01, n, 6)
+  X <- matrix(rnorm(n * 4), n, 4)
+
+  dat <- prepare_gbkmr_data(Y, Z, X,
+    time_points = 3, mixture_components = 2,
+    td_covariates = 1, baseline_covariates = 1,
+    td_covariate_names = "waist", log_transform_mixtures = TRUE,
+    validate_input = FALSE)
+
+  res <- gbkmr_run(
+    data = dat, outcome_type = "binary", time_points = 3,
+    iter = 300, n = 40, K = 3, n_knots = 10,
+    engine = "bkmr", verbose = FALSE)
+
+  # Counterfactual means must be probabilities in [0, 1]
+  expect_gte(res$counterfactual_means$low, 0)
+  expect_lte(res$counterfactual_means$low, 1)
+  expect_gte(res$counterfactual_means$high, 0)
+  expect_lte(res$counterfactual_means$high, 1)
+  expect_equal(res$call_info$outcome_type, "binary")
+})
+
+test_that("binary outcome with fastbkmr engine errors clearly", {
+  skip_if_not_installed("bkmr")
+  set.seed(42)
+  n <- 60
+  Y <- rbinom(n, 1, 0.4)
+  Z <- matrix(abs(rnorm(n * 6)) + 0.01, n, 6)
+  X <- matrix(rnorm(n * 4), n, 4)
+
+  dat <- prepare_gbkmr_data(Y, Z, X,
+    time_points = 3, mixture_components = 2,
+    td_covariates = 1, baseline_covariates = 1,
+    td_covariate_names = "waist", log_transform_mixtures = TRUE,
+    validate_input = FALSE)
+
+  expect_error(
+    gbkmr_run(data = dat, outcome_type = "binary",
+              time_points = 3, iter = 200, n = 40, K = 3,
+              engine = "fastbkmr", verbose = FALSE),
+    "Binary outcome is not supported"
+  )
+})
+
+test_that("convergence diagnostics are returned", {
+  skip_if_not_installed("bkmr")
+  set.seed(42)
+  n <- 60
+  Y <- rnorm(n)
+  Z <- matrix(abs(rnorm(n * 6)) + 0.01, n, 6)
+  X <- matrix(rnorm(n * 4), n, 4)
+
+  dat <- prepare_gbkmr_data(Y, Z, X,
+    time_points = 3, mixture_components = 2,
+    td_covariates = 1, baseline_covariates = 1,
+    td_covariate_names = "waist", log_transform_mixtures = TRUE,
+    validate_input = FALSE)
+
+  res <- gbkmr_run(
+    data = dat, time_points = 3, iter = 300, n = 40, K = 3,
+    n_knots = 10, engine = "bkmr", verbose = FALSE)
+
+  expect_true("diagnostics" %in% names(res))
+  expect_true("outcome_Y" %in% names(res$diagnostics))
+  expect_true(is.numeric(res$diagnostics$outcome_Y$ess))
+  expect_true(is.numeric(res$diagnostics$outcome_Y$geweke_max_abs))
+})
+
 test_that("print and summary methods work", {
   skip_if_not_installed("bkmr")
   set.seed(42)
