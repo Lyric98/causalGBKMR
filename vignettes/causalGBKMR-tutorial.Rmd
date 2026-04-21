@@ -314,21 +314,52 @@ results <- gbkmr_run(
 
 ### Step 5: Interpret results
 
-```{r scenario1-results}
-# The causal effect estimate (ATE)
-cat("Average Treatment Effect:", round(results$causal_effect$estimate, 4), "\n")
-cat("95% Credible Interval: (",
-    round(results$causal_effect$lower, 4), ",",
-    round(results$causal_effect$upper, 4), ")\n")
+The `results` object is a `gbkmr_results` list with several components.
+The simplest way to view the headline finding is to print it:
 
-# Counterfactual means
-cat("\nE[Y | low exposure]:", round(results$counterfactual_means$low, 4), "\n")
-cat("E[Y | high exposure]:", round(results$counterfactual_means$high, 4), "\n")
-
-# Variable importance (beta coefficients from outcome model)
-cat("\nVariable importance (outcome model betas):\n")
-print(round(results$variable_importance, 4))
+```{r scenario1-print}
+print(results)
 ```
+
+For a more detailed summary including settings:
+
+```{r scenario1-summary}
+summary(results)
+```
+
+**How to read the output:**
+
+- **ATE (Average Treatment Effect):** the causal contrast between the high and
+  low exposure scenarios. Here, `r round(results$causal_effect$estimate, 3)`
+  means that shifting all mixture components from their 25th to 75th percentile
+  is associated with a causal change of approximately this magnitude in the
+  outcome.
+- **95% Credible Interval:** the Bayesian analogue of a confidence interval.
+  If this interval excludes zero (same sign for lower and upper bounds), we
+  conclude the exposure contrast has a non-null causal effect at the 5% level.
+- **Counterfactual means:** `E[Y^a]` and `E[Y^a*]` are the expected outcomes
+  under each exposure scenario, averaged over the distribution of confounders.
+  The ATE is their difference.
+
+You can also access individual components directly:
+
+```{r scenario1-components}
+# Causal effect estimate and CI
+results$causal_effect
+
+# Counterfactual outcome means
+results$counterfactual_means
+
+# Posterior inclusion probabilities (variable importance from outcome model)
+# These are beta coefficients from the linear part; for PIPs on mixture
+# components, see results$raw_results$fit_y
+round(results$variable_importance, 4)
+```
+
+**Interpreting significance:** In this tiny-sample demo, the credible interval
+likely includes zero (we're using only 50 subjects and 500 MCMC iterations).
+In a real analysis with production settings, a CI that excludes zero would
+constitute evidence of a causal effect of the mixture on the outcome.
 
 ### Step 6: Diagnostic plots
 
@@ -521,7 +552,240 @@ results_fast <- run_gbkmr_panel(
 
 ---
 
-## 7. Tips and Best Practices
+## 7. Scenario 4: Working with Mixed Variable Types
+
+Real studies often mix continuous and binary variables. The package
+auto-detects variable types from your data and prints what it understood
+in the **Input Audit** block at the top of `gbkmr_run()` output.
+
+### Example: binary outcome, binary TD confounder
+
+```{r scenario4-setup, eval=FALSE}
+set.seed(7)
+n <- 300
+T_points <- 3
+
+# Binary outcome (e.g., incident diabetes by visit 3)
+Y <- rbinom(n, 1, 0.3)
+
+# Mixture: 2 continuous exposures at 3 time points
+Z <- matrix(rlnorm(n * 6, 1, 0.5), n, 6)
+
+# TD confounder: smoking status (binary), measured at t=1 and t=2,
+# plus baseline smoking, plus sex (baseline)
+X <- cbind(
+  rbinom(n, 1, 0.25),  # smoking_1 (binary TD)
+  rbinom(n, 1, 0.27),  # smoking_2 (binary TD)
+  rbinom(n, 1, 0.30),  # smoking_3 (binary TD)
+  rbinom(n, 1, 0.5)    # sex (baseline)
+)
+
+prepared <- prepare_gbkmr_data(
+  Y = Y, Z = Z, X = X,
+  time_points = T_points,
+  mixture_components = 2,
+  td_covariates = 1,
+  baseline_covariates = 1,
+  td_covariate_names = "smoking"
+)
+
+results_mixed <- gbkmr_run(
+  data = prepared,
+  outcome_type = "binary",      # <-- tell the package it's binary
+  time_points = T_points,
+  iter = 15000
+)
+```
+
+**What to expect in the Input Audit output:**
+
+```
+[Outcome]
+  Variable:        Y
+  Detected type:   binary
+  User specified:  binary
+  Link function:   probit (via bkmr::kmbayes family='binomial')
+  NOTE: binary outcome support is experimental in this version.
+
+[Time-varying confounders]
+  Number per time (Ldim):  1
+  Names:                   smoking
+    - smoking             type: binary
+      NOTE: binary TD confounder -- BKMR mediator model
+            will treat it as continuous in current version.
+```
+
+> **Current limitation:** Binary TD confounders are fit with Gaussian BKMR
+> in this version (not probit). The mediator sampling step still produces
+> valid g-computation, but posterior coverage may be optimistic. Full
+> binary-TD support is planned for v2.
+
+### What the package auto-detects vs.\ what you must specify
+
+| Variable role | Auto-detected? | Where to specify if needed |
+|---------------|---------------|---------------------------|
+| Outcome type (continuous/binary) | Yes (warns if mismatch) | `outcome_type` argument |
+| TD confounder type | Yes (displayed in audit) | *(not yet configurable)* |
+| Mixture components | Yes (from column naming) | `mixture_components` in prep |
+| Number of time points | No --- user input | `time_points` argument |
+| Baseline covariates | Yes (from column position) | `baseline_covariates` in prep |
+
+---
+
+## 8. Scenario 5: Setting Custom Contrasts Correctly
+
+This is the most commonly misunderstood part of causal mixture analysis.
+The causal contrast---comparing exposure scenario $\bar{a}$ versus
+$\bar{a}^*$---**must only change the mixture components**, never the
+confounders or baseline covariates.
+
+### The default: all mixture components at 25th vs.\ 75th percentile
+
+```{r scenario5-default, eval=FALSE}
+# Same as omitting a_probs (default is c(0.25, 0.75))
+results <- gbkmr_run(
+  data = prepared_data, time_points = 3,
+  a_probs = c(0.25, 0.75)
+)
+```
+
+The Input Audit will print:
+
+```
+[Causal contrast]
+  Low exposure (a):   all mixture components at 25th percentile
+  High exposure (a*): all mixture components at 75th percentile
+  IMPORTANT: Only mixture columns vary between a and a*.
+             Time-varying confounders are sampled via g-computation.
+             Baseline covariates are held at their mean.
+```
+
+### Wider or narrower contrasts
+
+```{r scenario5-widecontrast, eval=FALSE}
+# 10th vs 90th percentile -- stronger contrast, wider CI
+results_wide <- gbkmr_run(
+  data = prepared_data, time_points = 3,
+  a_probs = c(0.10, 0.90)
+)
+```
+
+### Specific exposure values (e.g., regulatory thresholds)
+
+Suppose you want to compare "all metals at background levels (1 ug/L)"
+versus "all metals at the EPA action level (5 ug/L)". Because the
+package log-transforms mixtures by default, you need to pass `log(1) = 0`
+and `log(5) = 1.609` in the *transformed* scale:
+
+```{r scenario5-custom, eval=FALSE}
+# Get the exposure column names first
+exposure_cols <- paste0("logM", rep(1:2, 3), "_", rep(0:2, each = 2))
+# exposure_cols = c("logM1_0", "logM2_0", "logM1_1", "logM2_1", "logM1_2", "logM2_2")
+
+a_background <- setNames(rep(log(1), 6), exposure_cols)  # background = 1 ug/L
+a_action     <- setNames(rep(log(5), 6), exposure_cols)  # action level = 5 ug/L
+
+results_regulatory <- run_gbkmr_panel(
+  sim_popn = prepared_data,
+  T = 3, p = 2,
+  mediator_basenames = "waist",
+  common_covariates = c("sex", "waist_0"),
+  a_vals = a_background,
+  astar_vals = a_action,
+  iter = 15000, n = 500, K = 1000, n_knots = 50
+)
+```
+
+### What NOT to do: accidentally varying confounders in the contrast
+
+A common mistake when using `run_gbkmr_panel()` directly is to put
+non-mixture variables in `a_vals` / `astar_vals`:
+
+```{r scenario5-wrong, eval=FALSE}
+# WRONG -- don't do this
+a_wrong <- c(logM1_0 = -1, logM2_0 = -1, waist_0 = 80)  # <-- waist shouldn't be here!
+```
+
+**Why it's wrong:** `waist_0` is a baseline confounder, not an exposure.
+Changing it between scenarios would mean you're estimating the effect of
+"different confounder values," which is not a causal mixture effect.
+
+The Input Audit always prints which columns will vary (mixture only),
+so double-check that block before launching a long MCMC run.
+
+---
+
+## 9. Scenario 6: Convergence Diagnostics Workflow
+
+MCMC convergence is **not guaranteed** just because the function
+completes. Always check diagnostics before trusting results.
+
+### Quick visual check: posterior stability
+
+```{r scenario6-diag1, eval=FALSE}
+raw <- results$raw_results
+
+# Posterior draws of E[Y|a] and E[Y|a*] should be "hairy caterpillars"
+# -- stationary with no drift
+par(mfrow = c(1, 2))
+plot(raw$Ya, type = "l", col = "steelblue",
+     main = "E[Y | low exposure]", ylab = "Y(a)", xlab = "MCMC iteration")
+plot(raw$Yastar, type = "l", col = "tomato",
+     main = "E[Y | high exposure]", ylab = "Y(a*)", xlab = "MCMC iteration")
+par(mfrow = c(1, 1))
+```
+
+**What to look for:**
+
+- Stable horizontal band → converged
+- Obvious drift or slow trend → increase `iter` and/or `sel` burn-in
+- Sudden jumps → examine the DGP; may indicate multimodal posterior
+
+### Diagnosing individual BKMR models
+
+Each fitted mediator and outcome model is stored in `results$raw_results`:
+
+```{r scenario6-diag2, eval=FALSE}
+# Mediator models (one per time-varying confounder per visit)
+fit_mediators <- results$raw_results$fit_mediators
+# fit_mediators[[t]][[l]] is the BKMR fit for TD confounder l at time t
+
+# Outcome model
+fit_y <- results$raw_results$fit_y
+
+# For standard BKMR, use the bkmr diagnostic functions directly:
+if (inherits(fit_y, "bkmrfit")) {
+  bkmr::TracePlot(fit = fit_y, par = "beta")
+  bkmr::TracePlot(fit = fit_y, par = "sigsq.eps")
+}
+
+# For fastBKMR, diagnostics are per-subset:
+if (is.list(fit_y) && !inherits(fit_y, "bkmrfit")) {
+  # Each fit_y[[i]] is a bkmrfit from subset i
+  bkmr::TracePlot(fit = fit_y[[1]], par = "beta")
+}
+```
+
+### If convergence looks poor
+
+Try these, in order:
+
+1. **Increase `iter`** from 15,000 to 30,000 or 50,000
+2. **Increase burn-in**: `sel = seq(floor(iter * 0.8), iter, by = 25)`
+3. **Check for problematic variables**: extreme outliers, near-constant
+   columns, or highly collinear exposures can destabilize MCMC
+4. **Run multiple chains** (currently requires manual loop over `currind`
+   seeds; planned for v2)
+
+> **Warning about packaged workflows:** when running `gbkmr_run()` with
+> many time points and confounders, the package fits many BKMR models
+> internally. A single non-converging model can bias the causal estimate.
+> In the current version, we recommend checking each mediator model
+> individually for studies with $T > 3$ or complex exposure structures.
+
+---
+
+## 10. Tips and Best Practices
 
 ### Parameter tuning guide
 
@@ -585,7 +849,7 @@ results <- gbkmr_run(
 
 ---
 
-## 8. Function Reference
+## 11. Function Reference
 
 | Function | Purpose | When to use |
 |----------|---------|-------------|

@@ -2,6 +2,119 @@
 #' @title User-friendly interface for g-BKMR
 #' @importFrom stats quantile
 
+#' Detect whether a vector is binary (0/1) or continuous
+#'
+#' @description Returns "binary" if the variable takes only 0/1 (or TRUE/FALSE)
+#'   values, "continuous" otherwise.
+#' @param x A numeric or logical vector.
+#' @return Character string: "binary" or "continuous".
+#' @keywords internal
+detect_variable_type <- function(x) {
+  if (is.logical(x)) return("binary")
+  x_clean <- x[!is.na(x)]
+  if (length(x_clean) == 0) return("continuous")
+  unique_vals <- unique(x_clean)
+  if (length(unique_vals) == 2L && all(unique_vals %in% c(0, 1))) {
+    return("binary")
+  }
+  "continuous"
+}
+
+#' Print a summary of what the package detected from user input
+#'
+#' @description Shows the user exactly which variables the package identified
+#'   and how it plans to analyze them. Helps users catch misspecifications
+#'   before launching a long MCMC run.
+#' @keywords internal
+print_input_audit <- function(data, outcome, outcome_type, time_points,
+                               detection, engine, n, iter, K, n_knots,
+                               a_probs, n_subset = NULL, n_cores = NULL) {
+  cat("\n")
+  cat("==============================================================\n")
+  cat("  causalGBKMR: Input Audit\n")
+  cat("==============================================================\n")
+
+  # --- Outcome ---
+  y_type_detected <- detect_variable_type(data[[outcome]])
+  cat("\n[Outcome]\n")
+  cat(sprintf("  Variable:        %s\n", outcome))
+  cat(sprintf("  Detected type:   %s\n", y_type_detected))
+  cat(sprintf("  User specified:  %s\n", outcome_type))
+  if (y_type_detected != outcome_type) {
+    cat("  WARNING: detected type differs from user-specified type.\n")
+    cat("           Proceeding with user-specified type. Check your data!\n")
+  }
+  if (outcome_type == "binary") {
+    cat("  Link function:   probit (via bkmr::kmbayes family='binomial')\n")
+    cat("  NOTE: binary outcome support is experimental in this version.\n")
+  } else {
+    cat("  Link function:   identity (Gaussian BKMR)\n")
+  }
+
+  # --- Exposures (mixture) ---
+  cat("\n[Mixture exposures]\n")
+  cat(sprintf("  Components per time (p): %d\n", detection$p))
+  cat(sprintf("  Time points (T):         %d\n", time_points))
+  cat(sprintf("  Total exposure columns:  %d\n", detection$p * time_points))
+
+  # --- Time-varying confounders ---
+  cat("\n[Time-varying confounders]\n")
+  if (detection$Ldim == 0L) {
+    cat("  None detected.\n")
+  } else {
+    cat(sprintf("  Number per time (Ldim):  %d\n", detection$Ldim))
+    cat(sprintf("  Names:                   %s\n",
+                paste(detection$td_covariate_names, collapse = ", ")))
+    for (nm in detection$td_covariate_names) {
+      # Detect type using all time-indexed instances (e.g., bmi_0, bmi_1, ...)
+      cols <- grep(paste0("^", nm, "_\\d+$"), names(data), value = TRUE)
+      if (length(cols) > 0L) {
+        t <- detect_variable_type(unlist(data[, cols]))
+        cat(sprintf("    - %-20s type: %s\n", nm, t))
+        if (t == "binary") {
+          cat("      NOTE: binary TD confounder -- BKMR mediator model\n")
+          cat("            will treat it as continuous in current version.\n")
+        }
+      }
+    }
+  }
+
+  # --- Baseline covariates ---
+  cat("\n[Baseline covariates]\n")
+  baseline_vars <- c("sex", detection$baseline_td_vars)
+  cat(sprintf("  Variables: %s\n", paste(baseline_vars, collapse = ", ")))
+  cat("  Role:      linear term X*beta (NOT in kernel h())\n")
+
+  # --- Model configuration ---
+  cat("\n[Model configuration]\n")
+  cat(sprintf("  Engine:          %s\n", engine))
+  if (engine == "fastbkmr" && !is.null(n_subset)) {
+    cat(sprintf("  fastBKMR setup:  %d subsets x ~%d obs, %d cores\n",
+                n_subset, as.integer(n / n_subset), n_cores))
+  }
+  if (engine == "bkmr") {
+    cat(sprintf("  Knots:           %d (Gaussian process approximation)\n", n_knots))
+  }
+  cat(sprintf("  Sample size:     %d\n", n))
+  cat(sprintf("  MCMC iterations: %d\n", iter))
+  cat(sprintf("  MC samples (K):  %d\n", K))
+
+  # --- Intervention contrast ---
+  cat("\n[Causal contrast]\n")
+  cat(sprintf("  Low exposure (a):   all mixture components at %dth percentile\n",
+              round(100 * a_probs[1])))
+  cat(sprintf("  High exposure (a*): all mixture components at %dth percentile\n",
+              round(100 * a_probs[2])))
+  cat("  Target estimand:    ACE = E[Y(a*)] - E[Y(a)]\n")
+  cat("  IMPORTANT: Only mixture columns vary between a and a*.\n")
+  cat("             Time-varying confounders are sampled via g-computation.\n")
+  cat("             Baseline covariates are held at their mean.\n")
+
+  cat("\n==============================================================\n")
+  cat("  If anything above is unexpected, stop and check your input.\n")
+  cat("==============================================================\n\n")
+}
+
 #' Run g-BKMR analysis
 #'
 #' @param data Data frame in g-BKMR format (see \code{\link{prepare_gbkmr_data}}).
@@ -85,17 +198,18 @@ gbkmr_run <- function(
     if (is.null(n_cores))  n_cores  <- 10L
   }
 
-  if (verbose) {
-    cat("Starting g-BKMR analysis...\n")
-    cat("  Engine:", engine, "| n:", n, "| iter:", iter,
-        "| T:", time_points, "\n")
-    if (engine == "fastbkmr")
-      cat("  fastBKMR: n_subset=", n_subset, ", n_cores=", n_cores, "\n")
-    cat("  Intervention: a_probs =", a_probs[1], "/", a_probs[2], "\n")
-  }
-
   # Detect variable structure
   detection <- detect_variable_patterns(data, time_points)
+
+  # Print full input audit so user knows what the package understood
+  if (verbose) {
+    print_input_audit(
+      data = data, outcome = outcome, outcome_type = outcome_type,
+      time_points = time_points, detection = detection,
+      engine = engine, n = n, iter = iter, K = K, n_knots = n_knots,
+      a_probs = a_probs, n_subset = n_subset, n_cores = n_cores
+    )
+  }
 
   results <- run_gbkmr_panel(
     sim_popn = data,
