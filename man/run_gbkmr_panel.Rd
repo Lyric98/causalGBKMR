@@ -20,6 +20,7 @@ run_gbkmr_panel(
   engine = c("bkmr", "fastbkmr"),
   n_subset = 10,
   n_cores = 10,
+  outcome_type = c("continuous", "binary"),
   a_probs = c(0.25, 0.75),
   a_vals = NULL,
   astar_vals = NULL,
@@ -56,6 +57,10 @@ run_gbkmr_panel(
 \item{n_subset}{Integer. Number of subsets for fastBKMR.}
 
 \item{n_cores}{Integer. Number of cores for fastBKMR parallel.}
+
+\item{outcome_type}{Character. "continuous" (Gaussian BKMR, default) or
+"binary" (probit BKMR via family="binomial"). Binary outcome requires
+engine="bkmr" (fastBKMR does not yet support non-Gaussian outcomes).}
 
 \item{a_probs}{Numeric vector of length 2. Quantile probabilities for
 intervention levels (default: c(0.25, 0.75)).}

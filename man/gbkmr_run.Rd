@@ -2,7 +2,7 @@
 % Please edit documentation in R/05-user-interface.R
 \name{gbkmr_run}
 \alias{gbkmr_run}
-\title{User-friendly interface for g-BKMR}
+\title{Run g-BKMR analysis}
 \usage{
 gbkmr_run(
   data,
@@ -68,5 +68,5 @@ intervention levels (default: c(0.25, 0.75)).}
 Object of class "gbkmr_results".
 }
 \description{
-User-friendly interface for g-BKMR
+Run g-BKMR analysis
 }
