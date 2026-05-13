@@ -1,0 +1,144 @@
+---
+title: "Example 3: Large samples with the fastBKMR engine"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{gbkmr_example_fastbkmr}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+Standard BKMR scales as $O(n^3)$ per MCMC iteration. For cohorts of MESA
+or ARIC scale ($n = 6{,}000$+), a single g-BKMR run can take 30+ hours.
+The **fast-BKMR engine** (Sonabend et al., 2024) accelerates this by:
+
+1. Splitting the data into $M$ random subsets of size $\approx n/M$.
+2. Fitting standard BKMR independently on each subset (optionally in
+   parallel across cores).
+3. Combining posterior summaries via median aggregation (WASP).
+
+In our benchmark (Use Case 3 of the paper), this yields ~15× speed-up
+at $n = 6{,}000$ with near-identical posterior beta estimates.
+
+## When to use fastBKMR
+
+| Sample size      | Recommended engine                   |
+|------------------|--------------------------------------|
+| $n \le 2{,}000$  | `bkmr` (with knot approximation)     |
+| $n > 2{,}000$    | `fastbkmr` (auto-selected by default) |
+
+The `engine = "auto"` default uses the above rule.
+
+## Installation
+
+`fbkmr` is not on CRAN, so install from GitHub:
+
+```{r install-fbkmr}
+remotes::install_github("junwei-lu/fbkmr")
+```
+
+## Running with fastBKMR (automatic)
+
+If your prepared data has $n > 2{,}000$, the auto engine picks fastBKMR.
+No code change needed:
+
+```{r auto}
+library(causalGBKMR)
+
+# Suppose prepared_data has 6000 rows
+results_fast <- gbkmr_run(
+  data = prepared_data,
+  time_points = 3,
+  iter = 15000
+  # engine = "auto" (default), n_subset and n_cores auto-set
+)
+```
+
+The Input Audit will print:
+
+```
+Auto-selected engine: fastbkmr (n = 6000 > 2000)
+...
+[Model configuration]
+  Engine:          fastbkmr
+  fastBKMR setup:  6 subsets x ~1000 obs, 6 cores
+```
+
+By default the package uses $M = \lfloor n / 1000 \rfloor$ subsets
+(at least 5) and the lesser of $M$, available cores, or 10 for
+`n_cores`.
+
+## Forcing fastBKMR at smaller $n$
+
+Even at $n = 1{,}500$ you can force fastBKMR if you have many cores:
+
+```{r force}
+results_force <- gbkmr_run(
+  data = prepared_data,
+  time_points = 3,
+  engine = "fastbkmr",
+  n_subset = 5,
+  n_cores = 5,
+  iter = 15000
+)
+```
+
+## How accurate is fastBKMR?
+
+In our paper benchmark (Use Case 3), $n = 6{,}000$ over 3 fitted models:
+
+| Method          | Beta (sex, waist₀) | Time   |
+|-----------------|---------------------|--------|
+| BKMR ($n$=500)  | (0.027, 0.492)      | 6 min  |
+| BKMR ($n$=6K)   | (-0.005, 0.517)     | 724 min |
+| fastBKMR ($n$=6K)| (-0.000, 0.515)    | 47 min |
+
+- Beta estimates are **statistically indistinguishable** between full
+  BKMR and fastBKMR at the same $n$.
+- Variable selection (PIPs) is correctly recovered, though slightly
+  less sharp than full BKMR — an expected consequence of subset
+  splitting and WASP aggregation.
+
+## Limitations
+
+- **Binary outcome with fastBKMR is not supported in v1.** The
+  `fbkmr::skmbayes()` function does not expose a `family` argument.
+  See [Example 2](gbkmr_example_binary.html) for binary outcomes
+  (use standard BKMR engine).
+- **No knot approximation in fastBKMR.** This is a deliberate choice
+  by the `fbkmr` authors (double approximation reduces accuracy).
+  As a result, fastBKMR's per-subset cost still scales with the number
+  of $Z$ columns; expect ~5–25 min per model at $n = 6{,}000$.
+- **Parallelisation requires `doSNOW` + `doParallel`.** On HPC clusters
+  these are typically pre-installed; on a personal machine, run
+  `install.packages(c("doSNOW", "doParallel"))` before using fastBKMR
+  in parallel.
+- **Login-node parallelism may fail.** Some HPC login nodes do not
+  allow spawning subprocesses. The package automatically falls back
+  to sequential mode if `doParallelSNOW` cannot start; see the
+  warning printed in such cases.
+
+## Comparing the two engines on your data
+
+For sample sizes near the threshold ($1{,}500 \le n \le 3{,}000$),
+it's worth running both engines as a sanity check:
+
+```{r compare}
+res_bkmr     <- gbkmr_run(data = prepared, time_points = 3,
+                          engine = "bkmr", iter = 15000)
+res_fastbkmr <- gbkmr_run(data = prepared, time_points = 3,
+                          engine = "fastbkmr", iter = 15000)
+
+# Should be very close
+res_bkmr$causal_effect
+res_fastbkmr$causal_effect
+```
+
+## See also
+
+- [Methodology overview](gbkmr_method_overview.html) — divide-and-conquer description
+- [Quick Start](gbkmr_quickstart.html)
+- Sonabend, A. et al. (2024). arXiv:2411.10858

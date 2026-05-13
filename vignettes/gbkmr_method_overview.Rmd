@@ -1,0 +1,176 @@
+---
+title: "g-BKMR: Methodology Overview"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{gbkmr_method_overview}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+## Introduction
+
+In environmental health, we often want to know how a **mixture of
+correlated chemical exposures**, measured over multiple visits, affects
+a health outcome. Two classes of difficulty arise:
+
+1. **Time-varying confounding.** Intermediate covariates (e.g., body mass
+   index, blood pressure) may be affected by past exposures *and*
+   simultaneously confound the effect of future exposures on the outcome.
+   Standard regression cannot adjust for such confounders without
+   introducing collider bias.
+2. **Nonlinear, non-additive exposure–response.** Real mixtures have
+   correlated components that may act through complex interactions.
+   Linear or additive models miss important biological structure.
+
+Existing tools tackle one problem or the other, but not both. **g-BKMR**
+(Chai et al.) combines the **g-formula** for causal inference under
+time-varying confounding with **Bayesian Kernel Machine Regression** for
+flexible exposure–response modelling. The `causalGBKMR` R package
+provides a complete implementation.
+
+## Notation
+
+We observe $n$ subjects across $T$ visits ($t = 0, 1, \ldots, T-1$).
+At each visit:
+
+- $\mathbf{A}_t = (A_{t1}, \ldots, A_{tp})^\top$ — a $p$-vector of
+  mixture exposures.
+- $\mathbf{L}_t = (L_{t1}, \ldots, L_{tq})^\top$ — a $q$-vector of
+  time-varying confounders (measured for $t \ge 1$).
+
+We also have $\mathbf{C}_0$ (baseline covariates) and outcome $Y$ at the
+final visit. We write $\bar{\mathbf{A}}_t = (\mathbf{A}_0, \ldots, \mathbf{A}_t)$
+for the exposure history.
+
+## Causal Estimand
+
+The target is the **average causal effect (ACE)** of contrasting two
+exposure trajectories $\bar{\mathbf{a}}$ and $\bar{\mathbf{a}}^*$:
+
+$$
+\text{ACE} = E[Y^{\bar{\mathbf{a}}^*}] - E[Y^{\bar{\mathbf{a}}}].
+$$
+
+By default `causalGBKMR` uses $\bar{\mathbf{a}} =$ 25th percentile and
+$\bar{\mathbf{a}}^* =$ 75th percentile of every mixture component.
+The user can specify arbitrary contrasts (Example 1).
+
+## Identification via the g-Formula
+
+Under the standard assumptions of **consistency**, **sequential
+exchangeability** (no unmeasured confounding at each visit), and
+**positivity**, the counterfactual mean is identified as
+
+$$
+E[Y^{\bar{\mathbf{a}}}] = \int \cdots \int
+E[Y \mid \bar{\mathbf{A}} = \bar{\mathbf{a}}, \bar{\mathbf{L}}, \mathbf{C}_0]
+\prod_{t=1}^{T-1} f(\mathbf{L}_t \mid \bar{\mathbf{A}}_{t-1} = \bar{\mathbf{a}}_{t-1},
+\bar{\mathbf{L}}_{t-1}, \mathbf{C}_0) \, d\bar{\mathbf{L}} \, dF(\mathbf{C}_0).
+$$
+
+The high-dimensional integral is intractable in closed form. g-BKMR
+evaluates it via **Monte Carlo simulation**, using BKMR models for each
+conditional distribution.
+
+## The BKMR Component
+
+Each conditional model in g-BKMR has the form
+
+$$
+y_i = h(\mathbf{z}_i) + \mathbf{x}_i^\top \boldsymbol{\beta} + \epsilon_i,
+$$
+
+where $h(\cdot)$ is a flexible, unknown function of the kernel predictors
+$\mathbf{z}_i$ (mixture + relevant history), and $\mathbf{x}_i$ are linear
+covariates. We place a Gaussian process prior on $h$ with squared-exponential
+kernel:
+
+$$
+\text{Cov}(h(\mathbf{z}_i), h(\mathbf{z}_j)) =
+\tau^2 \exp\Big\{- \sum_{m} \rho_m (z_{im} - z_{jm})^2\Big\}.
+$$
+
+Component-wise **variable selection** is built in: each bandwidth $\rho_m$
+is multiplied by a binary $\delta_m \sim \text{Bernoulli}(\pi)$, and the
+posterior mean of $\delta_m$ gives a **posterior inclusion probability** (PIP).
+
+## The g-BKMR Algorithm
+
+```
+1. FIT MEDIATOR MODELS
+   For each time-varying confounder L_{t,l} at each visit t = 1,...,T-1:
+     Fit BKMR: L_{t,l} = h_{t,l}(history) + C_0' beta + epsilon
+
+2. FIT OUTCOME MODEL
+   Fit BKMR: Y = h_Y(full history) + C_0' theta + epsilon
+
+3. MONTE CARLO G-COMPUTATION
+   For each posterior draw j = 1,...,J:
+     For each Monte Carlo replicate k = 1,...,K:
+       (a) Sequentially sample confounders forward in time under
+           intervention a (and again under a*)
+       (b) Predict the outcome under each scenario
+     Average over k -> Y_a^(j), Y_a*^(j)
+
+4. ACE ESTIMATE
+   ACE = mean over j of (Y_a*^(j) - Y_a^(j))
+   95% CrI: 2.5th and 97.5th percentiles of the same posterior draws
+```
+
+The Bayesian framework naturally propagates uncertainty from every
+fitted model into the final credible interval.
+
+## Computational Engine
+
+For moderate sample sizes ($n \le 2{,}000$), `causalGBKMR` uses
+standard BKMR with knot approximation (Bobb et al., 2018), which
+reduces per-iteration cost from $O(n^3)$ to $O(n d^2)$ for $d$ knots.
+
+For larger samples, the package automatically switches to
+**fast BKMR** (`fbkmr::skmbayes`, Sonabend et al., 2024), which splits
+the data into $M$ random subsets, fits BKMR independently on each, and
+combines via median posterior aggregation. This yields roughly $15\times$
+speed-up at $n = 6{,}000$ while preserving posterior accuracy.
+
+See Example 3 for details.
+
+## What g-BKMR Cannot Do (Yet)
+
+- **Effect modification by baseline covariates within $h$.** Currently
+  $h$ contains the mixture and time-varying confounders; baseline
+  covariates enter linearly. Adding effect modifiers to $h$ is on the v2
+  roadmap.
+- **Binary time-varying confounders with full probit handling.**
+  Continuous and binary outcomes are supported, but binary $L_t$ is
+  currently fit with Gaussian BKMR. The Input Audit warns about this.
+- **fastBKMR with binary outcome.** `fbkmr::skmbayes` does not yet
+  expose a family argument. Binary outcomes require `engine = "bkmr"`.
+
+## Next Steps
+
+- [Quick Start](gbkmr_quickstart.html) — minimal working example
+- [Example 1](gbkmr_example_contrasts.html) — custom intervention contrasts
+- [Example 2](gbkmr_example_binary.html) — binary outcome
+- [Example 3](gbkmr_example_fastbkmr.html) — large sample (fastBKMR)
+- [Diagnostics & troubleshooting](gbkmr_diagnostics.html)
+
+## References
+
+- Chai et al. *g-BKMR: A Bayesian kernel machine regression approach for
+  the causal analysis of time-varying environmental mixtures.*
+- Bobb, J. F., et al. (2015). *Bayesian kernel machine regression for
+  estimating the health effects of multi-pollutant mixtures.*
+  Biostatistics 16(3): 493–508.
+- Bobb, J. F., et al. (2018). *Statistical software for analyzing the
+  health effects of multiple concurrent exposures via Bayesian kernel
+  machine regression.* Environmental Health 17:67.
+- Robins, J. (1986). *A new approach to causal inference in mortality
+  studies with a sustained exposure period.* Mathematical Modelling
+  7(9–12): 1393–1512.
+- Sonabend, A., et al. (2024). *Scalable Gaussian process regression via
+  median posterior inference for estimating multi-pollutant mixture
+  health effects.* arXiv:2411.10858.

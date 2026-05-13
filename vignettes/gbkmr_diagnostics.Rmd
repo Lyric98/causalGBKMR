@@ -1,0 +1,214 @@
+---
+title: "Diagnostics & Troubleshooting"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{gbkmr_diagnostics}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+g-BKMR fits many BKMR models under the hood (one per time-varying
+confounder per visit, plus the outcome model). Any one of them can fail
+to converge, which biases the causal estimate. This article shows how
+to detect and fix problems.
+
+## 1. Input Audit (before MCMC)
+
+Every call to `gbkmr_run()` prints an **Input Audit** block before MCMC
+launches. Verify each section before letting a long run proceed.
+
+```
+==============================================================
+  causalGBKMR: Input Audit
+==============================================================
+
+[Outcome]
+  Variable:        Y
+  Detected type:   continuous
+  User specified:  continuous
+  Link function:   identity (Gaussian BKMR)
+
+[Mixture exposures]
+  Components per time (p): 2
+  Time points (T):         3
+  Total exposure columns:  6
+
+[Time-varying confounders]
+  Number per time (Ldim):  1
+  Names:                   waist
+    - waist                type: continuous
+
+[Baseline covariates]
+  Variables: sex, waist_0
+  Role:      linear term X*beta (NOT in kernel h())
+
+[Model configuration]
+  Engine:          bkmr
+  Knots:           50
+  Sample size:     500
+  MCMC iterations: 15000
+  MC samples (K):  1000
+
+[Causal contrast]
+  Low exposure (a):   all mixture components at 25th percentile
+  High exposure (a*): all mixture components at 75th percentile
+```
+
+If any of these is unexpected — stop. Common causes:
+
+- Outcome variable mismatch (e.g., `Y` is binary 0/1 but you specified
+  `outcome_type = "continuous"`).
+- Wrong column count (e.g., you forgot a baseline covariate).
+- TD confounder type unexpected.
+
+## 2. Automatic convergence check (after MCMC)
+
+When `verbose = TRUE` (default), the package prints a `[Convergence
+check]` block after MCMC finishes:
+
+```
+[Convergence check]
+  [OK]      mediator_t1_1        ESS=423, Geweke |z|=0.85
+  [OK]      mediator_t2_1        ESS=389, Geweke |z|=1.20
+  [WARNING] outcome_Y            ESS=67, Geweke |z|=3.20  [low_ess, geweke_nonstationary]
+
+  Some models show signs of poor convergence. Consider:
+    - Increasing iter (try 30000 or 50000)
+    - Increasing burn-in: sel = seq(floor(iter*0.8), iter, by=25)
+    - Inspecting trace plots: bkmr::TracePlot(results$raw_results$fit_y)
+```
+
+What the checks mean:
+
+- **ESS (Effective Sample Size).** Lower bound on the equivalent number
+  of independent posterior draws. We flag `low_ess` when ESS < 100 for
+  any parameter.
+- **Geweke z-score.** Compares chain means in the first 10% to the last
+  50% of post-burn-in draws. We flag `geweke_nonstationary` when
+  $|z| > 2.5$.
+
+The diagnostics are also stored on the results object:
+
+```{r diag-obj}
+results$diagnostics
+# $mediator_t1_1
+# $ess = 423
+# $geweke_max_abs = 0.85
+# $warning_flags = character(0)
+# ...
+```
+
+## 3. Visual diagnostics
+
+For deeper inspection, use the underlying `bkmr` diagnostic functions
+directly on the stored fits:
+
+### Standard BKMR engine
+
+```{r vis-bkmr}
+library(bkmr)
+fit_y <- results$raw_results$fit_y
+
+# Trace plot of beta (linear covariate coefficient)
+TracePlot(fit = fit_y, par = "beta")
+
+# Trace plot of residual variance
+TracePlot(fit = fit_y, par = "sigsq.eps")
+
+# Trace plot of kernel parameter
+TracePlot(fit = fit_y, par = "r")
+```
+
+What to look for:
+
+- **Stable horizontal band** ("hairy caterpillar"). Good.
+- **Drift or trend** over iterations. Increase `iter`.
+- **Stuck plateau** for many iterations. Multi-modal posterior;
+  consider reparameterisation or different priors.
+
+### fastBKMR engine
+
+For fastBKMR fits, each subset has its own trace:
+
+```{r vis-fast}
+# results$raw_results$fit_y is a list of bkmrfit objects
+fit_list <- results$raw_results$fit_y
+
+# Plot subset 1
+bkmr::TracePlot(fit = fit_list[[1]], par = "beta")
+
+# Or loop over all subsets
+par(mfrow = c(2, 5))   # 10 subsets
+for (i in seq_along(fit_list)) {
+  bkmr::TracePlot(fit = fit_list[[i]], par = "beta")
+}
+```
+
+## 4. Sampling diagnostics for the causal effect
+
+The g-computation draws produce posterior samples of the **causal
+effect** itself. Plot the trace to check posterior stability:
+
+```{r vis-ace}
+raw <- results$raw_results
+
+par(mfrow = c(1, 2))
+plot(raw$Ya, type = "l", col = "steelblue",
+     main = "E[Y | low exposure]",
+     ylab = expression(Y(bar(a))), xlab = "MCMC iteration")
+plot(raw$Yastar, type = "l", col = "tomato",
+     main = "E[Y | high exposure]",
+     ylab = expression(Y(bar(a)^"*")), xlab = "MCMC iteration")
+
+# Posterior distribution of the ACE itself
+diff_post <- raw$Yastar - raw$Ya
+hist(diff_post, breaks = 30, col = "steelblue", border = "white",
+     main = "Posterior of ACE", xlab = "ACE")
+abline(v = 0, col = "gray40", lty = 2, lwd = 2)
+abline(v = results$causal_effect$estimate, col = "red", lwd = 2)
+```
+
+## 5. Common problems and fixes
+
+| Symptom | Likely cause | Fix |
+|---------|-------------|-----|
+| `low_ess` on `outcome_Y` | Too few MCMC iterations | Increase `iter` to 30,000+ |
+| `geweke_nonstationary` | Chain hasn't reached stationarity | Increase burn-in: `sel = seq(floor(iter*0.8), iter, by=25)` |
+| Cf means outside reasonable range | Outcome on wrong scale / unintended transformation | Check `log_transform_mixtures` in `prepare_gbkmr_data()` |
+| Cf means not in [0,1] for binary | `outcome_type` mis-specified | Set `outcome_type = "binary"` |
+| `Number of nearest neighbors reduced` warning | `n_knots` > unique rows | Reduce `n_knots`; harmless otherwise |
+| `Parallel execution failed` warning | login node restricts parallelism | Package auto-falls back to sequential; submit job to a compute node for speed |
+| Wildly different PIPs across runs | Pre-burn-in samples included | Verify `max(sel) <= iter` and `sel` skips burn-in |
+
+## 6. Best-practice settings
+
+For a real analysis (not a smoke test):
+
+```{r prod}
+results <- gbkmr_run(
+  data = prepared_data,
+  time_points = 3,
+  iter = 30000,         # at least 15K, 30K+ for safety
+  K = 1000,             # Monte Carlo samples for g-computation
+  n_knots = 50          # standard BKMR only
+  # engine defaults to "auto", n_subset/n_cores auto-set for fastBKMR
+)
+
+# If any [WARNING] in convergence check, rerun with:
+results <- gbkmr_run(
+  data = prepared_data,
+  time_points = 3,
+  iter = 60000,
+  sel = seq(floor(60000 * 0.8), 60000, by = 25)
+)
+```
+
+## See also
+
+- [Methodology overview](gbkmr_method_overview.html)
+- [Quick Start](gbkmr_quickstart.html)
+- `?bkmr::TracePlot` — the underlying trace-plot function

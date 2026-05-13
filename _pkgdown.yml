@@ -1,7 +1,43 @@
 url: https://Lyric98.github.io/causalGBKMR/
 
+authors:
+  Yanran Li: ~
+  Linda Valeri:
+    href: https://www.lindavaleri.com/
+  Brent Coull: ~
+
+title: causalGBKMR
+
 template:
-  bootstrap: 5
+  params:
+    bootswatch: cosmo
+
+navbar:
+  type: default
+  left:
+    - icon: fa-home
+      href: index.html
+    - text: causalGBKMR
+      menu:
+        - text: Overview of Methodology
+          href: articles/gbkmr_method_overview.html
+        - text: Quick Start
+          href: articles/gbkmr_quickstart.html
+        - text: Example 1 — Custom intervention contrasts
+          href: articles/gbkmr_example_contrasts.html
+        - text: Example 2 — Binary outcome
+          href: articles/gbkmr_example_binary.html
+        - text: Example 3 — Large sample (fastBKMR engine)
+          href: articles/gbkmr_example_fastbkmr.html
+        - text: Diagnostics & Troubleshooting
+          href: articles/gbkmr_diagnostics.html
+  right:
+    - icon: fa-file-code-o
+      text: Functions
+      href: reference/index.html
+    - icon: fa-github fa-lg
+      text: GitHub
+      href: https://github.com/Lyric98/causalGBKMR
 
 reference:
   - title: "Data Preparation"

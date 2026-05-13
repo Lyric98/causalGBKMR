@@ -1,0 +1,179 @@
+---
+title: "Quick Start: g-BKMR with a continuous outcome"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{gbkmr_quickstart}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(
+  collapse = TRUE,
+  comment = "#>",
+  fig.width = 6,
+  fig.height = 4,
+  eval = requireNamespace("causalGBKMR", quietly = TRUE)
+)
+```
+
+This vignette walks through a complete g-BKMR analysis on simulated
+data: 2 mixture components measured at 3 time points, 1 time-varying
+confounder, 1 baseline covariate, and a continuous outcome. For the
+methodological background, see the
+[Methodology Overview](gbkmr_method_overview.html).
+
+## 1. Load the package
+
+```{r load}
+library(causalGBKMR)
+```
+
+## 2. Simulate example data
+
+```{r simdata}
+set.seed(123)
+n <- 200
+T_points <- 3   # 3 visits: t = 0, 1, 2
+p <- 2           # 2 exposures per visit
+Ldim <- 1        # 1 time-varying confounder
+n_baseline <- 1  # 1 baseline covariate (sex)
+
+# Continuous outcome
+Y <- rnorm(n, mean = 50, sd = 10)
+
+# Exposure matrix: 2 metals x 3 visits = 6 columns
+# Lognormal to mimic environmental concentrations
+Z <- matrix(rlnorm(n * p * T_points, meanlog = 1, sdlog = 0.5),
+            nrow = n, ncol = p * T_points)
+
+# Covariate matrix: 1 TD covariate (waist) x 3 visits + 1 baseline (sex) = 4 cols
+waist_base <- rnorm(n, 85, 12)
+X <- cbind(
+  waist_base + rnorm(n, 1, 2),    # waist at t=1
+  waist_base + rnorm(n, 2, 2),    # waist at t=2
+  waist_base + rnorm(n, 3, 2),    # waist at t=3
+  rbinom(n, 1, 0.5)               # sex (baseline)
+)
+
+cat("Y:", length(Y), "obs\n")
+cat("Z:", nrow(Z), "x", ncol(Z), "(", p, "exposures x", T_points, "visits)\n")
+cat("X:", nrow(X), "x", ncol(X), "(", Ldim, "TD x", T_points, "+",
+    n_baseline, "baseline)\n")
+```
+
+## 3. Prepare data
+
+`prepare_gbkmr_data()` converts your three matrices into the internal
+wide-format frame, naming columns as `logM<i>_<t>` for exposures and
+`<name>_<t>` for time-varying confounders.
+
+```{r prep}
+prepared_data <- prepare_gbkmr_data(
+  Y = Y, Z = Z, X = X,
+  time_points = T_points,
+  mixture_components = p,
+  td_covariates = Ldim,
+  baseline_covariates = n_baseline,
+  td_covariate_names = "waist",
+  log_transform_mixtures = TRUE   # recommended for raw concentrations
+)
+
+head(prepared_data[, 1:8])
+```
+
+## 4. Verify what the package detected
+
+```{r detect}
+detection <- detect_variable_patterns(prepared_data, T = T_points)
+print(detection)
+```
+
+The detection report confirms:
+
+- `p = 2` exposure components per visit
+- `Ldim = 1` time-varying confounder named `waist`
+- Naming pattern recognised as `known_with_underscore`
+
+If anything here is unexpected, stop and check your matrix construction
+before running MCMC.
+
+## 5. Run the analysis
+
+For production analyses, use `iter = 15000` or higher. For this vignette
+we use tiny parameters so it finishes in seconds.
+
+```{r run}
+results <- gbkmr_run(
+  data = prepared_data,
+  outcome = "Y",
+  outcome_type = "continuous",
+  time_points = T_points,
+  iter = 500,       # tiny demo; use 15000+ in practice
+  n = 50,
+  K = 10,
+  n_knots = 15
+  # engine = "auto"  # default: picks bkmr or fastbkmr based on n
+)
+```
+
+Before MCMC starts, you will see an **Input Audit** block that shows
+exactly what the package understood (outcome type, mixture dimensions,
+TD confounder types, model configuration, intervention contrast). If
+anything is wrong, abort and re-check.
+
+## 6. Read the results
+
+```{r print}
+print(results)
+```
+
+`print()` shows the headline ACE and 95% credible interval, plus the
+counterfactual means under low and high exposure.
+
+```{r summary}
+summary(results)
+```
+
+`summary()` adds the analysis settings.
+
+### Interpreting the output
+
+- **ACE.** The causal contrast on the **same scale as the outcome**.
+  Here Y is continuous, so the ACE is the expected change in Y when
+  shifting the mixture from the 25th to 75th percentile (under the
+  observed confounder distribution).
+- **95% credible interval.** Bayesian analogue of a CI. Excluding zero
+  (lower and upper same sign) is evidence for a non-null effect.
+- **Counterfactual means.** $E[Y^{a}]$ and $E[Y^{a^*}]$ averaged over
+  confounders. Their difference equals the ACE.
+
+```{r components}
+results$causal_effect       # estimate, lower, upper
+results$counterfactual_means
+round(results$variable_importance, 4)  # linear-term beta from outcome model
+```
+
+## 7. Convergence diagnostics
+
+Every call to `gbkmr_run()` runs Effective Sample Size (ESS) and Geweke
+z-score checks on each fitted BKMR model and stores them in
+`results$diagnostics`. In verbose mode the package also prints a
+`[Convergence check]` block (look for `[OK]` or `[WARNING]` per model).
+
+```{r diag}
+results$diagnostics
+```
+
+If any model shows `low_ess` or `geweke_nonstationary`, increase `iter`,
+increase burn-in (`sel`), and re-run.
+
+For full diagnostic workflows including trace plots, see
+[Diagnostics & Troubleshooting](gbkmr_diagnostics.html).
+
+## What's next?
+
+- [Example 1 — Custom intervention contrasts](gbkmr_example_contrasts.html)
+- [Example 2 — Binary outcome](gbkmr_example_binary.html)
+- [Example 3 — Large sample with fastBKMR](gbkmr_example_fastbkmr.html)
+- [Diagnostics & troubleshooting](gbkmr_diagnostics.html)

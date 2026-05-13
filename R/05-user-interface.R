@@ -340,35 +340,110 @@ gbkmr_run <- function(
   class(formatted_results) <- "gbkmr_results"
 
   if (verbose) {
-    cat("Analysis complete!\n")
-    cat("  ATE:", round(causal_effect$estimate, 4),
-        "  95% CI: (", round(causal_effect$lower, 4), ",",
-        round(causal_effect$upper, 4), ")\n")
-
-    # Print convergence warnings if any
-    cat("\n[Convergence check]\n")
-    any_warn <- FALSE
-    for (nm in names(diagnostics)) {
-      d <- diagnostics[[nm]]
-      flags <- d$warning_flags
-      if (length(flags) == 0L) {
-        cat(sprintf("  [OK]      %-20s ESS=%.0f, Geweke |z|=%.2f\n",
-                    nm, d$ess, d$geweke_max_abs))
-      } else {
-        any_warn <- TRUE
-        cat(sprintf("  [WARNING] %-20s ESS=%.0f, Geweke |z|=%.2f  [%s]\n",
-                    nm, d$ess, d$geweke_max_abs, paste(flags, collapse = ", ")))
-      }
-    }
-    if (any_warn) {
-      cat("\n  Some models show signs of poor convergence. Consider:\n")
-      cat("    - Increasing iter (try 30000 or 50000)\n")
-      cat("    - Increasing burn-in: sel = seq(floor(iter*0.8), iter, by=25)\n")
-      cat("    - Inspecting trace plots: bkmr::TracePlot(results$raw_results$fit_y)\n")
-    }
+    print_output_summary(formatted_results, detection)
   }
 
   formatted_results
+}
+
+#' Print a post-analysis summary describing the result
+#'
+#' @description After MCMC completes, prints what the result means: which
+#'   models were run, what scale the ACE is on, what assumptions are
+#'   required for the causal interpretation to be valid, plus convergence
+#'   diagnostics. Helps users catch mis-specifications they made earlier.
+#' @keywords internal
+print_output_summary <- function(results, detection) {
+  ci <- results$causal_effect
+  cf <- results$counterfactual_means
+  ct <- results$call_info
+
+  ace_scale <- if (ct$outcome_type == "binary") {
+    "risk difference (probability scale, in [-1, 1])"
+  } else {
+    "same scale as the outcome variable Y"
+  }
+
+  cat("\n")
+  cat("==============================================================\n")
+  cat("  causalGBKMR: Results Summary\n")
+  cat("==============================================================\n")
+
+  # --- Headline result ---
+  cat("\n[Causal effect estimate]\n")
+  cat(sprintf("  ACE       = %.4f\n", ci$estimate))
+  cat(sprintf("  95%% CrI  = (%.4f, %.4f)\n", ci$lower, ci$upper))
+  cat(sprintf("  Scale     : %s\n", ace_scale))
+  excl_zero <- sign(ci$lower) == sign(ci$upper) && ci$lower != 0
+  cat(sprintf("  95%% CrI excludes zero: %s\n",
+              if (excl_zero) "YES" else "NO"))
+
+  # --- Counterfactual means ---
+  cat("\n[Counterfactual means]\n")
+  cat(sprintf("  E[Y under low exposure  (a) ] = %.4f\n", cf$low))
+  cat(sprintf("  E[Y under high exposure (a*)] = %.4f\n", cf$high))
+  cat("  (ACE = E[Y(a*)] - E[Y(a)])\n")
+
+  # --- What was actually fit ---
+  cat("\n[Models fit]\n")
+  T_total <- ct$time_points
+  Ldim <- detection$Ldim
+  n_med <- Ldim * (T_total - 1)
+  cat(sprintf("  %d mediator BKMR model(s):", n_med))
+  if (n_med == 0) {
+    cat(" none (no time-varying confounders)\n")
+  } else {
+    cat("\n")
+    for (t in 1:(T_total - 1)) {
+      for (l in seq_along(detection$td_covariate_names)) {
+        cat(sprintf("    - %s at visit t=%d  (Gaussian BKMR)\n",
+                    detection$td_covariate_names[l], t))
+      }
+    }
+  }
+  outcome_fam <- if (ct$outcome_type == "binary") "probit BKMR (family='binomial')" else "Gaussian BKMR"
+  cat(sprintf("  1 outcome BKMR model:\n"))
+  cat(sprintf("    - %s (%s)\n", ct$outcome, outcome_fam))
+  cat(sprintf("  Engine: %s  |  Sample size: %d  |  MCMC iter: %d\n",
+              ct$engine, ct$sample_size, ct$mcmc_iterations))
+
+  # --- Causal assumptions ---
+  cat("\n[Required causal assumptions]\n")
+  cat("  This ACE has a causal interpretation only if:\n")
+  cat("    1. CONSISTENCY     -- observed Y under the assigned exposure\n")
+  cat("                          equals the counterfactual Y under that exposure.\n")
+  cat("    2. SEQUENTIAL EXCH -- no unmeasured time-varying confounding\n")
+  cat("                          given the observed history at each visit.\n")
+  cat("    3. POSITIVITY      -- every covariate stratum has a non-zero\n")
+  cat("                          probability of each exposure level.\n")
+  cat("  Violations of these assumptions yield biased estimates.\n")
+
+  # --- Convergence ---
+  cat("\n[Convergence check]\n")
+  any_warn <- FALSE
+  for (nm in names(results$diagnostics)) {
+    d <- results$diagnostics[[nm]]
+    flags <- d$warning_flags
+    if (length(flags) == 0L) {
+      cat(sprintf("  [OK]      %-20s ESS=%.0f, Geweke |z|=%.2f\n",
+                  nm, d$ess, d$geweke_max_abs))
+    } else {
+      any_warn <- TRUE
+      cat(sprintf("  [WARNING] %-20s ESS=%.0f, Geweke |z|=%.2f  [%s]\n",
+                  nm, d$ess, d$geweke_max_abs, paste(flags, collapse = ", ")))
+    }
+  }
+  if (any_warn) {
+    cat("\n  Some models show signs of poor convergence. Consider:\n")
+    cat("    - Increasing iter (try 30000 or 50000)\n")
+    cat("    - Increasing burn-in: sel = seq(floor(iter*0.8), iter, by=25)\n")
+    cat("    - Inspecting trace plots:\n")
+    cat("        bkmr::TracePlot(results$raw_results$fit_y)\n")
+  }
+
+  cat("\n==============================================================\n\n")
+
+  invisible(NULL)
 }
 
 #' @export

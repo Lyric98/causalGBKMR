@@ -1,0 +1,152 @@
+---
+title: "Example 2: Binary outcome (probit BKMR)"
+output: rmarkdown::html_vignette
+vignette: >
+  %\VignetteIndexEntry{gbkmr_example_binary}
+  %\VignetteEngine{knitr::rmarkdown}
+  %\VignetteEncoding{UTF-8}
+---
+
+```{r setup, include = FALSE}
+knitr::opts_chunk$set(collapse = TRUE, comment = "#>", eval = FALSE)
+```
+
+This example shows how to run g-BKMR with a **binary outcome** (e.g.,
+incident diabetes, hospitalisation). Under the hood the package fits
+a **probit BKMR** (`family = "binomial"` in `bkmr::kmbayes`) for the
+outcome model and converts predictions back to the probability scale.
+The ACE then represents a **causal risk difference**.
+
+## Setup
+
+```{r setup-data}
+library(causalGBKMR)
+
+set.seed(7)
+n <- 300
+T_points <- 3
+
+# Binary outcome (e.g., incident diabetes by visit 3)
+Y <- rbinom(n, 1, 0.3)
+
+# Mixture: 2 continuous exposures at 3 visits
+Z <- matrix(rlnorm(n * 6, 1, 0.5), n, 6)
+
+# 1 TD confounder (waist circumference) measured at 3 visits + 1 baseline (sex)
+waist_base <- rnorm(n, 85, 12)
+X <- cbind(
+  waist_base + rnorm(n, 1, 2),    # waist at t=1
+  waist_base + rnorm(n, 2, 2),    # waist at t=2
+  waist_base + rnorm(n, 3, 2),    # waist at t=3
+  rbinom(n, 1, 0.5)               # sex (baseline)
+)
+
+prepared <- prepare_gbkmr_data(
+  Y = Y, Z = Z, X = X,
+  time_points = T_points,
+  mixture_components = 2,
+  td_covariates = 1,
+  baseline_covariates = 1,
+  td_covariate_names = "waist"
+)
+```
+
+## Run with `outcome_type = "binary"`
+
+```{r run-binary}
+results_binary <- gbkmr_run(
+  data = prepared,
+  outcome_type = "binary",      # <- triggers probit BKMR
+  time_points = T_points,
+  iter = 15000
+)
+```
+
+## What changes for binary outcomes
+
+The **Input Audit** flags binary status:
+
+```
+[Outcome]
+  Variable:        Y
+  Detected type:   binary
+  User specified:  binary
+  Link function:   probit (via bkmr::kmbayes family='binomial')
+  NOTE: Only engine='bkmr' supports binary outcomes.
+        Output is returned on the probability scale.
+```
+
+Under the hood:
+
+1. **Outcome model** uses `bkmr::kmbayes(..., family = "binomial")` ->
+   fits probit BKMR.
+2. After MCMC, `bkmr::SamplePred()` returns the linear predictor
+   $h(\mathbf{Z}) + \mathbf{X}^\top\boldsymbol{\beta}$. The package
+   transforms via $\Phi(\cdot)$ (standard normal CDF) to get
+   probabilities.
+3. ACE is therefore a **risk difference**:
+   $\text{ACE} = P(Y=1 \mid \bar{\mathbf{a}}^*) - P(Y=1 \mid \bar{\mathbf{a}})$.
+
+## Read the output
+
+```{r read-binary}
+print(results_binary)
+
+# ACE is a risk difference; can be positive or negative
+results_binary$causal_effect$estimate   # e.g., 0.04 = a 4 percentage-point increase
+
+# Counterfactual probabilities (both should be in [0, 1])
+results_binary$counterfactual_means$low   # P(Y=1 | a)
+results_binary$counterfactual_means$high  # P(Y=1 | a*)
+```
+
+## Limitations
+
+### Sample size
+
+In v1, binary-outcome g-BKMR only uses the **standard BKMR engine**.
+We recommend $n \le 1{,}500$ for binary outcomes; larger samples may
+need scaling tricks. fastBKMR with binary outcome is on the v2 roadmap
+(waiting on a polygamma sampler in upstream `fbkmr`).
+
+```{r fastbkmr-binary, eval = FALSE}
+# This will ERROR with a clear message:
+gbkmr_run(data = prepared, outcome_type = "binary",
+          engine = "fastbkmr")
+#> Error: Binary outcome is not supported with engine='fastbkmr'.
+#>   fbkmr::skmbayes() does not expose the family argument.
+#>   Use engine='bkmr' for binary outcomes, or subsample your data.
+```
+
+### Binary time-varying confounders
+
+Currently, if you have a **binary** time-varying confounder (e.g.,
+smoking status that varies over visits), the package fits the mediator
+model with Gaussian BKMR and the Input Audit warns:
+
+```
+[Time-varying confounders]
+    - smoking             type: binary
+      NOTE: binary TD confounder -- BKMR mediator model
+            will treat it as continuous in current version.
+```
+
+The mediator sampling step uses normal noise rather than Bernoulli. The
+g-computation predictions are still defined but posterior coverage may
+be slightly optimistic for the binary confounder pathway. Full probit
+support for binary $L_t$ is planned for v2.
+
+## When to use binary outcomes
+
+- Outcome is rare disease incidence (e.g., new diabetes case)
+- Outcome is yes/no event during follow-up
+- Outcome is a thresholded clinical indicator
+
+For **continuous** outcomes (log-glucose, BMI, blood pressure), use the
+default `outcome_type = "continuous"` (Gaussian BKMR).
+
+## See also
+
+- [Methodology overview](gbkmr_method_overview.html)
+- [Quick Start](gbkmr_quickstart.html)
+- [Diagnostics & troubleshooting](gbkmr_diagnostics.html)
