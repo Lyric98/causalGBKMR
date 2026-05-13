@@ -23,7 +23,7 @@ launches. Verify each section before letting a long run proceed.
 
 ```
 ==============================================================
-  causalGBKMR: Input Audit
+  causalBKMR: Input Audit
 ==============================================================
 
 [Outcome]

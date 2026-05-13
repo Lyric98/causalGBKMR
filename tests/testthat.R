@@ -1,4 +1,4 @@
 library(testthat)
-library(causalGBKMR)
+library(causalBKMR)
 
-test_check("causalGBKMR")
+test_check("causalBKMR")

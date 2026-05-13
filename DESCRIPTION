@@ -1,4 +1,4 @@
-Package: causalGBKMR
+Package: causalBKMR
 Title: Causal Inference for Time-Varying Environmental Mixtures via g-BKMR
 Version: 0.1.0
 Authors@R: c(
@@ -30,5 +30,5 @@ Suggests:
     testthat (>= 3.0.0)
 Config/testthat/edition: 3
 VignetteBuilder: knitr
-URL: https://lyric98.github.io/causalGBKMR/, https://github.com/Lyric98/causalGBKMR
-BugReports: https://github.com/Lyric98/causalGBKMR/issues
+URL: https://lyric98.github.io/causalBKMR/, https://github.com/Lyric98/causalBKMR
+BugReports: https://github.com/Lyric98/causalBKMR/issues

@@ -95,7 +95,7 @@ print_input_audit <- function(data, outcome, outcome_type, time_points,
                                a_probs, n_subset = NULL, n_cores = NULL) {
   cat("\n")
   cat("==============================================================\n")
-  cat("  causalGBKMR: Input Audit\n")
+  cat("  causalBKMR: Input Audit\n")
   cat("==============================================================\n")
 
   # --- Outcome ---
@@ -366,7 +366,7 @@ print_output_summary <- function(results, detection) {
 
   cat("\n")
   cat("==============================================================\n")
-  cat("  causalGBKMR: Results Summary\n")
+  cat("  causalBKMR: Results Summary\n")
   cat("==============================================================\n")
 
   # --- Headline result ---

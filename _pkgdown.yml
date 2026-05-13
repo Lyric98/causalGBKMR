@@ -1,4 +1,4 @@
-url: https://Lyric98.github.io/causalGBKMR/
+url: https://Lyric98.github.io/causalBKMR/
 
 authors:
   Yanran Li: ~
@@ -6,7 +6,7 @@ authors:
     href: https://www.lindavaleri.com/
   Brent Coull: ~
 
-title: causalGBKMR
+title: causalBKMR
 
 template:
   params:
@@ -17,7 +17,7 @@ navbar:
   left:
     - icon: fa-home
       href: index.html
-    - text: causalGBKMR
+    - text: causalBKMR
       menu:
         - text: Overview of Methodology
           href: articles/gbkmr_method_overview.html
@@ -37,7 +37,7 @@ navbar:
       href: reference/index.html
     - icon: fa-github fa-lg
       text: GitHub
-      href: https://github.com/Lyric98/causalGBKMR
+      href: https://github.com/Lyric98/causalBKMR
 
 reference:
   - title: "Data Preparation"

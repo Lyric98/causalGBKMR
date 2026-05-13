@@ -25,7 +25,7 @@ For all examples we assume `prepared_data` is the output of
 ## The default
 
 ```{r default}
-library(causalGBKMR)
+library(causalBKMR)
 results <- gbkmr_run(
   data = prepared_data,
   time_points = 3,

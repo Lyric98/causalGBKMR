@@ -13,7 +13,7 @@ knitr::opts_chunk$set(
   comment = "#>",
   fig.width = 6,
   fig.height = 4,
-  eval = requireNamespace("causalGBKMR", quietly = TRUE)
+  eval = requireNamespace("causalBKMR", quietly = TRUE)
 )
 ```
 
@@ -26,7 +26,7 @@ methodological background, see the
 ## 1. Load the package
 
 ```{r load}
-library(causalGBKMR)
+library(causalBKMR)
 ```
 
 ## 2. Simulate example data

@@ -20,7 +20,7 @@ The ACE then represents a **causal risk difference**.
 ## Setup
 
 ```{r setup-data}
-library(causalGBKMR)
+library(causalBKMR)
 
 set.seed(7)
 n <- 300

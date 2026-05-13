@@ -29,7 +29,7 @@ a health outcome. Two classes of difficulty arise:
 Existing tools tackle one problem or the other, but not both. **g-BKMR**
 (Chai et al.) combines the **g-formula** for causal inference under
 time-varying confounding with **Bayesian Kernel Machine Regression** for
-flexible exposure–response modelling. The `causalGBKMR` R package
+flexible exposure–response modelling. The `causalBKMR` R package
 provides a complete implementation.
 
 ## Notation
@@ -55,7 +55,7 @@ $$
 \text{ACE} = E[Y^{\bar{\mathbf{a}}^*}] - E[Y^{\bar{\mathbf{a}}}].
 $$
 
-By default `causalGBKMR` uses $\bar{\mathbf{a}} =$ 25th percentile and
+By default `causalBKMR` uses $\bar{\mathbf{a}} =$ 25th percentile and
 $\bar{\mathbf{a}}^* =$ 75th percentile of every mixture component.
 The user can specify arbitrary contrasts (Example 1).
 
@@ -126,7 +126,7 @@ fitted model into the final credible interval.
 
 ## Computational Engine
 
-For moderate sample sizes ($n \le 2{,}000$), `causalGBKMR` uses
+For moderate sample sizes ($n \le 2{,}000$), `causalBKMR` uses
 standard BKMR with knot approximation (Bobb et al., 2018), which
 reduces per-iteration cost from $O(n^3)$ to $O(n d^2)$ for $d$ knots.
 

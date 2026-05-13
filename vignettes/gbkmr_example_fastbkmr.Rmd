@@ -46,7 +46,7 @@ If your prepared data has $n > 2{,}000$, the auto engine picks fastBKMR.
 No code change needed:
 
 ```{r auto}
-library(causalGBKMR)
+library(causalBKMR)
 
 # Suppose prepared_data has 6000 rows
 results_fast <- gbkmr_run(
